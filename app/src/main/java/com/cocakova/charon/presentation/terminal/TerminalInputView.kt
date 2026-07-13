@@ -1,13 +1,16 @@
 package com.cocakova.charon.presentation.terminal
 
 import android.content.Context
+import android.graphics.Rect
 import android.text.InputType
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.terminal.input.KeyEncoder
 
 /**
@@ -32,13 +35,20 @@ class TerminalInputView(context: Context) : View(context) {
 
     override fun onCheckIsTextEditor(): Boolean = true
 
+    override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        logInput { "focus ${if (gainFocus) "gained" else "LOST"}" }
+    }
+
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        logInput { "input connection created" }
         outAttrs.inputType = InputType.TYPE_NULL
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
             EditorInfo.IME_FLAG_NO_EXTRACT_UI or
             EditorInfo.IME_ACTION_NONE
         return object : BaseInputConnection(this, false) {
             override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
+                logInput { "commitText len=${text.length}" }
                 onInput?.invoke(text.toString())
                 return true
             }
@@ -53,7 +63,9 @@ class TerminalInputView(context: Context) : View(context) {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val encoded = encodeKeyEvent(keyCode, event) ?: return super.onKeyDown(keyCode, event)
+        val encoded = encodeKeyEvent(keyCode, event)
+        logInput { "keyDown $keyCode -> ${if (encoded == null) "unhandled" else "${encoded.length}ch"}" }
+        if (encoded == null) return super.onKeyDown(keyCode, event)
         onInput?.invoke(encoded)
         return true
     }
@@ -96,5 +108,11 @@ class TerminalInputView(context: Context) : View(context) {
         requestFocus()
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+        logInput { "showKeyboard: isFocused=$isFocused hasWindowFocus=${hasWindowFocus()}" }
+    }
+
+    // Event names only, never key content: typed text includes remote passwords.
+    private inline fun logInput(message: () -> String) {
+        if (BuildConfig.DEBUG) Log.d("CharonInput", message())
     }
 }
