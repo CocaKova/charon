@@ -1,14 +1,21 @@
 package com.cocakova.charon
 
 import android.app.Application
+import com.cocakova.charon.ssh.SessionManager
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
 
 class CharonApp : Application() {
 
+    // Manual DI, Keryx-style: process-wide singletons wired here.
+    lateinit var sessionManager: SessionManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
         installBouncyCastle()
+        System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
+        sessionManager = SessionManager(this)
     }
 
     private fun installBouncyCastle() {
