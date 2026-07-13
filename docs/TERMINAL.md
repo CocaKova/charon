@@ -17,20 +17,20 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
 
 ## v0 feature checklist (walking skeleton)
 
-- [ ] C0 controls: BEL BS HT LF VT FF CR SO SI
-- [ ] CSI cursor: CUU CUD CUF CUB CNL CPL CHA CUP HVP VPA
-- [ ] CSI edit: ED EL ECH ICH DCH IL DL SU SD
-- [ ] SGR: 0-9, 21-29, 30-37/39, 40-47/49, 90-97, 100-107, 38;5 48;5, 38;2 48;2 (truecolor)
-- [ ] DECSTBM scroll regions + origin mode (DECOM)
-- [ ] Autowrap **with deferred-wrap (pending-wrap) semantics** — explicit tests
-- [ ] Tab stops: HT HTS TBC (BitSet)
-- [ ] Modes: DECCKM DECTCEM DECAWM IRM
-- [ ] Alternate screen: 47 / 1047 / 1048 / 1049 (with cursor save/restore)
-- [ ] DECSC/DECRC, RI IND NEL, RIS + DECSTR
-- [ ] Charsets: G0/G1 designation, DEC Special Graphics (vim/tmux line-drawing)
-- [ ] Responses: DA1 (VT220-class), DA2, DSR 5, DSR 6/CPR (origin-aware), OSC 10/11
+- [x] C0 controls: BEL BS HT LF VT FF CR SO SI
+- [x] CSI cursor: CUU CUD CUF CUB CNL CPL CHA CUP HVP VPA
+- [x] CSI edit: ED EL ECH ICH DCH IL DL SU SD
+- [x] SGR: 0-9, 21-29, 30-37/39, 40-47/49, 90-97, 100-107, 38;5 48;5, 38;2 48;2 (truecolor)
+- [x] DECSTBM scroll regions + origin mode (DECOM)
+- [x] Autowrap **with deferred-wrap (pending-wrap) semantics** — explicit tests
+- [x] Tab stops: HT HTS TBC (BitSet)
+- [x] Modes: DECCKM DECTCEM DECAWM IRM
+- [x] Alternate screen: 47 / 1047 / 1048 / 1049 (with cursor save/restore)
+- [x] DECSC/DECRC, RI IND NEL, RIS + DECSTR
+- [x] Charsets: G0/G1 designation, DEC Special Graphics (vim/tmux line-drawing)
+- [x] Responses: DA1 (VT220-class), DA2, DSR 5, DSR 6/CPR (origin-aware), OSC 10/11
       color queries, CSI 14t/18t size reports
-- [ ] wcwidth: generated UCD table; combining = 0; wide CJK = 2; VS16 → 2; ambiguous-width setting
+- [x] wcwidth: generated UCD table; combining = 0; wide CJK = 2; VS16 → 2; ambiguous-width setting
 
 ## v0.4 additions
 
@@ -59,4 +59,6 @@ lay out against).
 
 ## Conformance log
 
-(append dated results here as milestones pass)
+- 2026-07-13 — v0 checklist implemented; 98 JVM tests green; corpus goldens locked
+  (vim syntax screen, htop meters, tmux split, ls --color, truecolor gradient);
+  parse throughput 91.7 MB/s on the Spark (floor: 50).
