@@ -33,6 +33,9 @@ class TerminalSession(
 
     val state = MutableStateFlow<State>(State.Connecting)
 
+    /** Live grid dimensions, for chrome that shows cols x rows. */
+    val dims = MutableStateFlow(cols to rows)
+
     val term = TerminalEmulator(
         cols, rows,
         onResponse = { sendText(it) }, // DA/DSR/CPR replies go straight back out
@@ -58,6 +61,9 @@ class TerminalSession(
             if (c) term.resize(cols, rows)
             c
         }
-        if (changed) onResize?.invoke(cols, rows)
+        if (changed) {
+            dims.value = cols to rows
+            onResize?.invoke(cols, rows)
+        }
     }
 }

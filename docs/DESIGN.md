@@ -44,8 +44,38 @@ letter-spaced, teal.
 
 - **The obol**: coin iconography for anything payment/supporter related. The app icon is
   the obol above the waters.
-- **Crossing the river**: connection flows are framed as crossings — connect = "crossing",
-  disconnect = "return to shore", TOFU trust prompt = "meeting the ferryman" (fingerprint
-  as the toll).
+- **Crossing the river**: connection flows are framed as crossings — connect = "crossing"
+  (the sea quickens, then the terminal crossfades in), disconnect = "return to shore",
+  TOFU trust prompt = "meeting the ferryman" (fingerprint as the toll).
 - Restraint: mythology flavors labels and empty states; it never obscures function.
   Error messages stay literal.
+
+## Terminal chrome — how Charon reads different from Termux/Termius
+
+Termux is a bare grid with stock buttons; Termius buries the terminal in toolbar. Charon
+wears **one thin band of instrument panel** and otherwise gets out of the way:
+
+- **Status strip** above the grid: state dot (StyxTeal breathing = connected, ObolGold =
+  crossing, WarnEmber = lost) + `user@host` + live `cols×rows`. It later becomes the
+  session switcher (v0.5) — the chrome earns its pixels before it multiplies.
+- **Accessory row** is part of the instrument: JetBrains Mono labels, DepthSlate key
+  pills on AbyssInk, press = quick sink-and-spring scale + teal ripple; the sticky Ctrl
+  latch fills teal when armed. Long-press variants / mod-lock / F-key page land in v0.4.
+- **Cursor** is the one always-on brand mark inside the grid: a StyxTeal block with a
+  soft 530 ms blink; the off-phase keeps a hairline teal outline (never vanishes), and
+  output holds it solid.
+- **JetBrains Mono everywhere** — terminal cells and UI chrome share one voice.
+- The grid itself stays honest: correct rendering beats decoration; themes come as
+  curated ANSI-16 schemes (default scheme "Styx", tuned to the palette) once the
+  palette-base plumbing lands in terminal-core.
+
+## The Dock (connection hub)
+
+The landing surface evolves into a hub — v0.2's host vault is its first real form:
+
+- Saved hosts as cards (name, user@host, tags, reachability dot later), the sea beneath.
+- Quick connect stays, demoted to one card among the fleet.
+- v0.1.x precursor: the last crossing's host/user are remembered (never the password)
+  and prefill the form — reconnect is two taps.
+- Single live session for now; when multi-session lands (v0.5) the Dock and the status
+  strip are the two faces of the same session list.

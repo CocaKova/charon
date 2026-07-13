@@ -5,12 +5,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -42,10 +44,13 @@ fun QuickConnectScreen(
     error: String?,
     onConnect: (ConnectConfig) -> Unit,
     modifier: Modifier = Modifier,
+    initialHost: String = "",
+    initialPort: String = "22",
+    initialUser: String = "",
 ) {
-    var host by rememberSaveable { mutableStateOf("") }
-    var port by rememberSaveable { mutableStateOf("22") }
-    var username by rememberSaveable { mutableStateOf("") }
+    var host by rememberSaveable { mutableStateOf(initialHost) }
+    var port by rememberSaveable { mutableStateOf(initialPort) }
+    var username by rememberSaveable { mutableStateOf(initialUser) }
     var password by rememberSaveable { mutableStateOf("") }
     var keyPem by rememberSaveable { mutableStateOf("") }
     var keyPassphrase by rememberSaveable { mutableStateOf("") }
@@ -55,7 +60,7 @@ fun QuickConnectScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .imePadding()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -66,13 +71,18 @@ fun QuickConnectScreen(
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
-            "the ferryman awaits",
+            if (connecting) "crossing the river…" else "the ferryman awaits",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
         Spacer(Modifier.height(20.dp))
-        BrailleSea(modifier = Modifier.fillMaxWidth(), rows = 4)
+        // The waters quicken while you cross.
+        BrailleSea(
+            modifier = Modifier.fillMaxWidth(),
+            rows = 4,
+            frameMillis = if (connecting) 45 else 100,
+        )
         Spacer(Modifier.height(24.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

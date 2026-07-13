@@ -1,12 +1,23 @@
 package com.cocakova.charon.ssh
 
+import android.util.Log
 import net.schmizz.keepalive.KeepAliveProvider
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
+import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
+
+private const val TAG = "CharonSsh"
+
+/** Work items for the single channel-writer thread. */
+private sealed class ChannelOp {
+    class Write(val bytes: ByteArray) : ChannelOp()
+    class Resize(val cols: Int, val rows: Int) : ChannelOp()
+    data object Stop : ChannelOp()
+}
 
 class SshjEngine : SshEngine {
 
@@ -44,20 +55,33 @@ class SshjEngine : SshEngine {
             sshSession.allocatePTY("xterm-256color", cols, rows, 0, 0, emptyMap<PTYMode, Int>())
             val shell = sshSession.startShell()
 
-            session.onOutput = { bytes ->
+            // All channel traffic is marshalled through one queue + thread: onOutput
+            // and onResize fire on the UI thread (keystrokes, keyboard-driven grid
+            // changes) AND the reader thread (DA/DSR responses), and a direct socket
+            // write from the UI thread is a NetworkOnMainThreadException — which used
+            // to vanish into a silent catch. One writer also keeps keystrokes and
+            // emulator responses from interleaving mid-sequence.
+            val outbound = LinkedBlockingQueue<ChannelOp>()
+            thread(name = "charon-ssh-write-${session.id.take(8)}", isDaemon = true) {
                 try {
-                    shell.outputStream.write(bytes)
-                    shell.outputStream.flush()
-                } catch (_: Exception) {
+                    while (true) {
+                        when (val op = outbound.take()) {
+                            is ChannelOp.Stop -> break
+                            is ChannelOp.Write -> {
+                                shell.outputStream.write(op.bytes)
+                                shell.outputStream.flush()
+                            }
+                            is ChannelOp.Resize ->
+                                shell.changeWindowDimensions(op.cols, op.rows, 0, 0)
+                        }
+                    }
+                } catch (e: Exception) {
                     // channel gone; the reader thread reports the disconnect
+                    Log.w(TAG, "writer stopped", e)
                 }
             }
-            session.onResize = { cols, rows ->
-                try {
-                    shell.changeWindowDimensions(cols, rows, 0, 0)
-                } catch (_: Exception) {
-                }
-            }
+            session.onOutput = { bytes -> outbound.put(ChannelOp.Write(bytes)) }
+            session.onResize = { cols, rows -> outbound.put(ChannelOp.Resize(cols, rows)) }
 
             // Reader: remote bytes into the emulator until EOF.
             thread(name = "charon-ssh-read-${session.id.take(8)}", isDaemon = true) {
@@ -71,8 +95,10 @@ class SshjEngine : SshEngine {
                         if (n > 0) session.feedRemote(buf, 0, n)
                     }
                 } catch (e: Exception) {
+                    Log.w(TAG, "reader stopped", e)
                     reason = e.message ?: e.javaClass.simpleName
                 } finally {
+                    outbound.put(ChannelOp.Stop)
                     session.state.value = TerminalSession.State.Disconnected(reason)
                     runCatching { sshSession.close() }
                     runCatching { client.disconnect() }

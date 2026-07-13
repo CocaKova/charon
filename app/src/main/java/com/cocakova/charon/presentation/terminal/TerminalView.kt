@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -48,13 +49,21 @@ fun TerminalView(
     }
 
     var frame by remember { mutableLongStateOf(0L) }
+    var cursorOn by remember { mutableStateOf(true) }
     LaunchedEffect(session) {
         var lastDrawn = -1L
+        var lastChangeNanos = 0L
         while (true) {
-            withFrameNanos { }
+            val now = withFrameNanos { it }
             val g = session.term.generation
             if (g != lastDrawn) {
                 lastDrawn = g
+                lastChangeNanos = now // output resets the blink: cursor solid while streaming
+                frame++
+            }
+            val on = ((now - lastChangeNanos) / CURSOR_BLINK_NANOS) % 2 == 0L
+            if (on != cursorOn) {
+                cursorOn = on
                 frame++
             }
         }
@@ -70,11 +79,18 @@ fun TerminalView(
         frame // subscribe: redraw whenever the emulator generation advances
         drawIntoCanvas { canvas ->
             synchronized(session.lock) {
-                drawTerminal(canvas.nativeCanvas, session.term, paints, size.width, size.height)
+                drawTerminal(
+                    canvas.nativeCanvas, session.term, paints,
+                    size.width, size.height, cursorOn,
+                )
             }
         }
     }
 }
+
+/** The water's glow: the cursor is StyxTeal, the one always-on brand mark in the grid. */
+private const val CURSOR_TEAL = 0x3ECFB2
+private const val CURSOR_BLINK_NANOS = 530_000_000L
 
 class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Float) {
     val text = Paint().apply {
@@ -95,6 +111,7 @@ private fun drawTerminal(
     p: TerminalPaints,
     width: Float,
     height: Float,
+    cursorOn: Boolean,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -166,20 +183,26 @@ private fun drawTerminal(
         }
     }
 
-    // Cursor block (over text, translucent so the glyph stays readable).
+    // Cursor: teal block over text (translucent, the glyph stays readable); the
+    // blink's off-phase leaves a hairline outline so the cursor never vanishes.
     if (term.cursorVisible) {
         val wideCursor = CellAttrs.hasStyle(
             term.screen.line(term.cursorY).attrs[term.cursorX], CellAttrs.WIDE,
         )
-        p.fill.color = opaque(term.defaultFg)
-        p.fill.alpha = 160
-        canvas.drawRect(
-            term.cursorX * cw,
-            term.cursorY * ch,
-            (term.cursorX + if (wideCursor) 2 else 1) * cw,
-            term.cursorY * ch + ch,
-            p.fill,
-        )
+        val left = term.cursorX * cw
+        val top = term.cursorY * ch
+        val right = (term.cursorX + if (wideCursor) 2 else 1) * cw
+        p.fill.color = opaque(CURSOR_TEAL)
+        if (cursorOn) {
+            p.fill.alpha = 170
+            canvas.drawRect(left, top, right, top + ch, p.fill)
+        } else {
+            p.fill.alpha = 140
+            p.fill.style = Paint.Style.STROKE
+            p.fill.strokeWidth = p.cellWidth * 0.09f
+            canvas.drawRect(left, top, right, top + ch, p.fill)
+            p.fill.style = Paint.Style.FILL
+        }
         p.fill.alpha = 255
     }
 }
