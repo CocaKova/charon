@@ -1,0 +1,30 @@
+package com.cocakova.charon.ssh
+
+/**
+ * The thin seam over the SSH library — just wide enough that swapping sshj for the
+ * mwiede JSch fork stays cheap (the plan's fallback), and no wider.
+ */
+interface SshEngine {
+    /**
+     * Connect, authenticate, open a shell with a PTY, and wire it to [session]:
+     * remote bytes → [TerminalSession.feedRemote], [TerminalSession.onOutput] → stdin,
+     * [TerminalSession.onResize] → window-change. Blocks until the shell is live;
+     * throws on failure. The returned handle owns the transport.
+     */
+    fun connectShell(config: ConnectConfig, session: TerminalSession): SshConnection
+}
+
+interface SshConnection {
+    val isConnected: Boolean
+    fun disconnect()
+}
+
+data class ConnectConfig(
+    val host: String,
+    val port: Int = 22,
+    val username: String,
+    val password: String? = null,
+    /** OpenSSH/PEM private key text (pasted in v0.1; Keystore-backed from v0.3). */
+    val privateKeyPem: String? = null,
+    val keyPassphrase: String? = null,
+)

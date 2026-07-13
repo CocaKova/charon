@@ -23,5 +23,14 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".service.ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains user-initiated interactive SSH terminal sessions while the app is in the background" />
+        </service>
+
     </application>
 </manifest>
