@@ -1,0 +1,50 @@
+# cursor=4,0 alt=true title=
+|  1 package com.cocakova.charon.terminal
+|  2
+|  3 /**
+|  4  * Cell attributes packed into a single Long — one per grid cell, so this la
+|    yout is
+|  5  * the hot path for memory and copies.
+|  6  *
+|  7  * Layout (LSB..MSB):
+|  8  *   bits  0..23  fg color payload (0xRRGGBB when RGB mode, palette index 0.
+|    .255 when palette mode)
+|  9  *   bits 24..25  fg mode: 0 = default, 1 = palette, 2 = rgb
+| 10  *   bits 26..49  bg color payload
+| 11  *   bits 50..51  bg mode
+| 12  *   bits 52..63  style flags
+| 13  */
+| 14 object CellAttrs {
+| 15     const val MODE_DEFAULT = 0
+| 16     const val MODE_PALETTE = 1
+| 17     const val MODE_RGB = 2
+| 18
+| 19     private const val COLOR_MASK = 0xFFFFFFL
+| 20     private const val MODE_MASK = 0x3L
+| 21     private const val FG_COLOR_SHIFT = 0
+|<nal-core/src/main/kotlin/com/cocakova/charon/terminal/CellAttrs.kt" 78L, 3100B
+# row attr+text checksums
+00 650b0024
+01 d3decdf4
+02 df845619
+03 0dd51820
+04 69f9016b
+05 811e63df
+06 cc71bf34
+07 1717afea
+08 1be333dd
+09 f9c395cb
+10 27d6814f
+11 5535e5df
+12 fd2c898e
+13 ba81b470
+14 bacdf680
+15 a7808e49
+16 99f297c9
+17 ae7e2d6f
+18 14265c9f
+19 344f0178
+20 695d15d2
+21 0443db9c
+22 5a71c96a
+23 c09f5d96
