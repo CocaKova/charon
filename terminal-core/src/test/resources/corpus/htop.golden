@@ -1,0 +1,50 @@
+# cursor=79,23 alt=true title=
+|
+|    0[3.3%]   3[3.9%]  6[2.6%]  9[2.0%]  10[1.9%]  13[3.3%]  16[2.6%] 19[1.9%]
+|    1[2.6%]   4[1.9%]  7[1.9%]           11[5.9%]  14[3.2%]  17[9.7%]
+|    2[1.3%]   5[5.2%]  8[2.6%]           12[1.3%]  15[3.3%]  18[1.3%]
+|  Mem[||||||||||||||||||||||78.4G/122G] Tasks: 382, 2499 thr, 309 kthr; 1 runn
+|  Swp[||||                 5.52G/60.8G] Load average: 0.51 0.58 0.61
+|                                        Uptime: 8 days, 02:38:46
+|
+|  [Main] [I/O]
+|    PID USER       PRI  NI  VIRT   RES   SHR S  CPU%▽MEM%   TIME+  Command
+|2789041 cocakova    20   0 73.9G  554M 45644 S   4.5  0.4  1h24:01 claude --dang
+| 765782 cocakova    20   0 26084  8380  3100 R   3.2  0.0  0:00.23 htop
+|2128840 cocakova    20   0 88.4G 4960M  643M S   1.3  4.0  4:48.53 VLLM::EngineC
+|   2821 root        20   0 1325M 63112 18260 S   0.6  0.0  8:19.09 /usr/sbin/tai
+|   4576 root        20   0 1204M  5456  2324 S   0.6  0.0  0:06.97 /usr/bin/cont
+|   4786 dnsmasq     20   0 46640  2224  1448 S   0.6  0.0 45:41.44 redis-server
+|   5820 dnsmasq     20   0 5056M  449M  8772 S   0.6  0.4  1:07.89 /opt/erlang/l
+|   9380 root        20   0 21.4G 20872  8424 S   0.6  0.0  3:52.51 node dist/src
+| 441998 cocakova    20   0 16676  6592  4784 S   0.6  0.0  0:04.23 sshd: cocakov
+| 763763 cocakova    20   0 73.9G  554M 45644 S   0.6  0.4  0:00.10 claude --dang
+|1438683 cocakova    20   0 16.2G  171M  113M S   0.6  0.1  8:36.46 /usr/libexec/
+|1440237 cocakova    20   0 11.1G  429M  131M S   0.6  0.3  7:35.78 /snap/firefox
+|1582626 dnsmasq     20   0  280M 13876 11728 S   0.6  0.0  2:45.61 postgres: pos
+|F1Help  F2Setup F3SearchF4FilterF5Tree  F6SortByF7Nice -F8Nice +F9Kill  F10Quit
+# row attr+text checksums
+00 977e9e69
+01 3fc6a3ed
+02 d2f29d06
+03 c4db1b51
+04 5142d923
+05 8aa215d6
+06 960ba2d7
+07 977e9e69
+08 2b0211fc
+09 c9e022d2
+10 17dd4d6c
+11 85b5396d
+12 682d94bc
+13 3652f98c
+14 d23f4c95
+15 c200a52f
+16 294564ed
+17 573e793d
+18 3512e022
+19 aa2319f1
+20 1ef15a55
+21 bf6010bf
+22 956a8447
+23 710bf535

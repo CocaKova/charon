@@ -1,0 +1,134 @@
+[?1049h[22;0;0t[?1h=[H[2J[?12l[?25h[?1000l[?1002l[?1003l[?1006l[?1005l[?2004h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;24r[c[>c[>q]10;?\]11;?\[1;1H[?25l[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                         "spark-ef6b" 16:29 13-Jul-26(B[m[?12l[?25h[1;1H(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;24r[?25l[1;1H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                         "spark-ef6b" 16:29 13-Jul-26(B[m[?12l[?25h[1;1H[32m[1mcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$ ls
+[34m[1mapp(B[m               [34m[1mdocs(B[m               [32m[1mgradlew(B[m      README.md            [34m[1mtools
+build(B[m             [34m[1mgradle(B[m             [32m[1mgradlew.bat(B[m  settings.gradle.kts
+build.gradle.kts  gradle.properties  LICENSE      [34m[1mterminal-core
+(B[m[32m[1mcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$ [?25l[1d│[2;41H│[3;41H│[4;41H│[5;41H│[6;41H│[7;41H│[8;41H│[9;41H│[10;41H│[11;41H│[12;41H│[13;41H[32m│[14;41H│[15;41H│[16;41H│[17;41H│[18;41H│[19;41H│[20;41H│[21;41H│[22;41H│[23;41H│(B[m[34m[1m[Hbuild(B[m             [34m[1mgradle(B[m             [32m[1mgra
+dlew.bat(B[m  settings.gradle.kts[11X
+build.gradle.kts  gradle.properties  LIC
+ENSE      [34m[1mterminal-core(B[m[17X[32m[1m
+cocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$ [6;40H[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K[1;42H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                         "spark-ef6b" 16:29 13-Jul-26(B[m[?12l[?25h[1;42H[5;1H[32m[1mcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$ [1;42H[32m[1mcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$[2;42H echo crossing the styx[3;42Hcrossing the styx[4;42H[32m[1mcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$[5;42H [?7727h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;24r[5;43H[?25l[1;41H│[2;41H│[3;41H│[4;41H│[5;41H│[6;41H│[7;41H│[8;41H│[9;41H│[10;41H│[11;41H│[12;41H│[13;41H[32m│[14;41H│[15;41H│[16;41H│[17;41H│[18;41H│[19;41H│[20;41H│[21;41H│[22;41H│[23;41H│(B[m[34m[1m[Hbuild(B[m             [34m[1mgradle(B[m             [32m[1mgra
+dlew.bat(B[m  settings.gradle.kts[11X
+build.gradle.kts  gradle.properties  LIC
+ENSE      [34m[1mterminal-core(B[m[17X[32m[1m
+cocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$ [6;40H[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K
+[1K[32m[1m[1;42Hcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$[2;42H echo crossing the styx[K[3;42Hcrossing the styx[K[32m[1m[4;42Hcocakova@spark-ef6b(B[m:[34m[1m~/workspace/charon(B[m$[5;42H [K[6;42H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                         "spark-ef6b" 16:29 13-Jul-26(B[m[?12l[?25h[5;43H

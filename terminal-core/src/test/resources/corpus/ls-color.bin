@@ -1,0 +1,20 @@
+total 80
+drwxrwxr-x 11 cocakova cocakova 4096 Jul 13 16:27 [0m[01;34m.[0m
+drwxrwxr-x  9 cocakova cocakova 4096 Jul 13 15:59 [01;34m..[0m
+drwxrwxr-x  4 cocakova cocakova 4096 Jul 13 16:04 [01;34mapp[0m
+drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:04 [01;34mbuild[0m
+-rw-rw-r--  1 cocakova cocakova  355 Jul 13 15:59 build.gradle.kts
+drwxrwxr-x  2 cocakova cocakova 4096 Jul 13 16:04 [01;34mdocs[0m
+drwxrwxr-x  8 cocakova cocakova 4096 Jul 13 16:26 [01;34m.git[0m
+-rw-rw-r--  1 cocakova cocakova  185 Jul 13 16:00 .gitignore
+drwxrwxr-x  6 cocakova cocakova 4096 Jul 13 16:04 [01;34m.gradle[0m
+drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:05 [01;34mgradle[0m
+-rw-rw-r--  1 cocakova cocakova  267 Jul 13 15:59 gradle.properties
+-rwxrwxr-x  1 cocakova cocakova 5296 Jul 13 15:59 [01;32mgradlew[0m
+-rwxrwxr-x  1 cocakova cocakova 2176 Jul 13 15:59 [01;32mgradlew.bat[0m
+drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:04 [01;34m.kotlin[0m
+-rw-rw-r--  1 cocakova cocakova  304 Jul 13 16:03 LICENSE
+-rw-rw-r--  1 cocakova cocakova 2032 Jul 13 16:03 README.md
+-rw-rw-r--  1 cocakova cocakova  849 Jul 13 15:59 settings.gradle.kts
+drwxrwxr-x  4 cocakova cocakova 4096 Jul 13 16:04 [01;34mterminal-core[0m
+drwxrwxr-x  2 cocakova cocakova 4096 Jul 13 16:29 [01;34mtools[0m

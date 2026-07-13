@@ -1,0 +1,50 @@
+# cursor=0,20 alt=false title=
+|total 80
+|drwxrwxr-x 11 cocakova cocakova 4096 Jul 13 16:27 .
+|drwxrwxr-x  9 cocakova cocakova 4096 Jul 13 15:59 ..
+|drwxrwxr-x  4 cocakova cocakova 4096 Jul 13 16:04 app
+|drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:04 build
+|-rw-rw-r--  1 cocakova cocakova  355 Jul 13 15:59 build.gradle.kts
+|drwxrwxr-x  2 cocakova cocakova 4096 Jul 13 16:04 docs
+|drwxrwxr-x  8 cocakova cocakova 4096 Jul 13 16:26 .git
+|-rw-rw-r--  1 cocakova cocakova  185 Jul 13 16:00 .gitignore
+|drwxrwxr-x  6 cocakova cocakova 4096 Jul 13 16:04 .gradle
+|drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:05 gradle
+|-rw-rw-r--  1 cocakova cocakova  267 Jul 13 15:59 gradle.properties
+|-rwxrwxr-x  1 cocakova cocakova 5296 Jul 13 15:59 gradlew
+|-rwxrwxr-x  1 cocakova cocakova 2176 Jul 13 15:59 gradlew.bat
+|drwxrwxr-x  3 cocakova cocakova 4096 Jul 13 16:04 .kotlin
+|-rw-rw-r--  1 cocakova cocakova  304 Jul 13 16:03 LICENSE
+|-rw-rw-r--  1 cocakova cocakova 2032 Jul 13 16:03 README.md
+|-rw-rw-r--  1 cocakova cocakova  849 Jul 13 15:59 settings.gradle.kts
+|drwxrwxr-x  4 cocakova cocakova 4096 Jul 13 16:04 terminal-core
+|drwxrwxr-x  2 cocakova cocakova 4096 Jul 13 16:29 tools
+|
+|
+|
+|
+# row attr+text checksums
+00 d362c1b0
+01 9dd4c3b9
+02 889f0ca7
+03 b8ad4c26
+04 180f3530
+05 fb83a049
+06 3bfe3f8e
+07 8d3c9de0
+08 7481fc37
+09 e95e4a42
+10 14dabbe6
+11 c4778e41
+12 1e93495b
+13 297d805f
+14 df5175cf
+15 7e4ce18f
+16 4e6ecc37
+17 b29fbd18
+18 9ac28d42
+19 f73229de
+20 977e9e69
+21 977e9e69
+22 977e9e69
+23 977e9e69

@@ -13,3 +13,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
 }
+
+tasks.withType<Test>().configureEach {
+    // Golden regeneration: ./gradlew :terminal-core:test -Dcharon.regenGoldens=<dir>
+    systemProperty("charon.regenGoldens", System.getProperty("charon.regenGoldens") ?: "")
+}
