@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Charon: the obol above the waters of the Styx. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#0A0F14"
+        android:pathData="M12,12 m-12,0 a12,12 0 1,1 24,0 a12,12 0 1,1 -24,0" />
+    <path
+        android:strokeColor="#3ECFB2"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M3,14.5 q1.5,-1.6 3,0 t3,0 t3,0 t3,0 t3,0 t3,0" />
+    <path
+        android:strokeColor="#2A8F7C"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M3,17.5 q1.5,-1.4 3,0 t3,0 t3,0 t3,0 t3,0 t3,0" />
+    <path
+        android:strokeColor="#1C5F53"
+        android:strokeWidth="1.0"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M3,20.2 q1.5,-1.2 3,0 t3,0 t3,0 t3,0 t3,0 t3,0" />
+    <path
+        android:fillColor="#D9A441"
+        android:pathData="M12,7.2 m-2.6,0 a2.6,2.6 0 1,1 5.2,0 a2.6,2.6 0 1,1 -5.2,0" />
+    <path
+        android:fillColor="#0A0F14"
+        android:pathData="M12,7.2 m-1.1,0 a1.1,1.1 0 1,1 2.2,0 a1.1,1.1 0 1,1 -2.2,0" />
+</vector>
