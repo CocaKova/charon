@@ -28,6 +28,14 @@ data class HostEntity(
     val passwordSealed: ByteArray?,
     /** Crossing key: id of an [IdentityEntity]; null = password auth. */
     val identityId: String?,
+    /** The harbor this mooring belongs to — the Dock's collapsible group. Blank = unsorted. */
+    val harbor: String = "",
+    /** Lantern hue as #RRGGBB, a per-host colour tag; null = the default dimmed glow. */
+    val colorHex: String? = null,
+    /** Command typed into the shell on every crossing — e.g. `tmux new -As main`. Blank = none. */
+    val startupCommand: String = "",
+    /** Redial on transport death (backoff + instant network-callback redial). */
+    val autoReconnect: Boolean = true,
     val lastConnectedAt: Long,
     val createdAt: Long,
     val lastModified: Long,
@@ -118,7 +126,7 @@ interface KnownHostDao {
 
 @Database(
     entities = [HostEntity::class, KnownHostEntity::class, IdentityEntity::class],
-    version = 2,
+    version = 4,
     exportSchema = false,
 )
 abstract class CharonDb : RoomDatabase() {
@@ -143,9 +151,25 @@ abstract class CharonDb : RoomDatabase() {
             }
         }
 
+        // v0.3 → v0.4: harbors + lantern colours (scalable Dock categorisation).
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hosts ADD COLUMN harbor TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE hosts ADD COLUMN colorHex TEXT")
+            }
+        }
+
+        // v0.4 → v0.5: startup command + auto-reconnect (multi-session milestone).
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hosts ADD COLUMN startupCommand TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE hosts ADD COLUMN autoReconnect INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         fun build(context: Context): CharonDb =
             Room.databaseBuilder(context, CharonDb::class.java, "charon.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

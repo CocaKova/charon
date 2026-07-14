@@ -39,4 +39,9 @@ data class ConnectConfig(
     /** OpenSSH/PEM private key text (pasted in v0.1; Keystore-backed from v0.3). */
     val privateKeyPem: String? = null,
     val keyPassphrase: String? = null,
+    /** Sent to the shell on every (re)connect — the mosh-compensation seat, e.g.
+     *  `tmux new -As main` to land back in the same session after a redial. Blank = none. */
+    val startupCommand: String = "",
+    /** Redial on transport death (backoff + network-callback). The default for a homelab. */
+    val autoReconnect: Boolean = true,
 )

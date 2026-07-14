@@ -55,9 +55,11 @@ letter-spaced, teal.
 Termux is a bare grid with stock buttons; Termius buries the terminal in toolbar. Charon
 wears **one thin band of instrument panel** and otherwise gets out of the way:
 
-- **Status strip** above the grid: state dot (StyxTeal breathing = connected, ObolGold =
-  crossing, WarnEmber = lost) + `user@host` + live `cols×rows`. It later becomes the
-  session switcher (v0.5) — the chrome earns its pixels before it multiplies.
+- **Session switcher** above the grid (v0.5): one tab per live crossing — a breathing
+  state dot (StyxTeal = connected, ObolGold = crossing, WarnEmber = lost) + `user@host`
+  + a `×` to close; the active tab wears DepthSlate. A trailing teal **+** drops to the
+  Dock to raise another crossing. Grew out of the v0.1 single status strip — the chrome
+  earned its pixels, then multiplied.
 - **Accessory row** is part of the instrument: JetBrains Mono labels, DepthSlate key
   pills on AbyssInk, press = quick sink-and-spring scale + teal ripple. Sticky Ctrl/Alt
   read the theme — **teal = armed** (charged one-shot), **obol-gold = locked**;
@@ -79,9 +81,25 @@ wears **one thin band of instrument panel** and otherwise gets out of the way:
 
 The landing surface evolves into a hub — v0.2's host vault is its first real form:
 
-- Saved hosts as cards (name, user@host, tags, reachability dot later), the sea beneath.
+- Saved hosts as **moorings** (name, user@host, last-crossed, a lantern dot), the sea beneath.
 - Quick connect stays, demoted to one card among the fleet.
 - v0.1.x precursor: the last crossing's host/user are remembered (never the password)
   and prefill the form — reconnect is two taps.
-- Single live session for now; when multi-session lands (v0.5) the Dock and the status
-  strip are the two faces of the same session list.
+
+### Scaling the fleet — harbors, lanterns, search (v0.5)
+
+A homelab grows past a flat list, so the Dock categorises without clutter:
+
+- **Harbors** — each mooring can name a harbor (free-text, autocompletes from harbors
+  already in the fleet). The Dock renders **collapsible sections**: named harbors first
+  (alphabetical, `▾`/`▸` caret + count), the un-harbored moorings under a final
+  *unsorted* header. A plain fleet with no harbors stays a plain headerless list — the
+  structure only appears once it earns its keep.
+- **Lantern** — a per-host colour tag from a small curated palette (or the default
+  dimmed teal glow), shown as the mooring's dot. Categorises at a glance; reachability
+  dots (live TCP dial) take this same spot at the fleet milestone.
+- **Search** — a filter field surfaces once the fleet passes a handful of hosts; it
+  matches label / address / harbor and drops the headers for a flat result run.
+- **Underway strip** — when crossings are live and you've stepped back to the Dock (the
+  switcher's **+**), a row of tap-to-resume chips rides the top: the two faces of the
+  one session list.

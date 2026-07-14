@@ -4,6 +4,7 @@ import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,19 +21,24 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +50,7 @@ import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.presentation.components.StyxCrossing
 import com.cocakova.charon.presentation.keys.KeysSheet
+import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.theme.DeepTeal
 import kotlinx.coroutines.delay
 import com.cocakova.charon.theme.MistGrey
@@ -58,6 +65,8 @@ import com.cocakova.charon.theme.StyxTeal
 fun DockScreen(
     hosts: List<HostEntity>,
     identities: List<IdentityEntity>,
+    runningSessions: List<TerminalSession>,
+    onResumeSession: (String) -> Unit,
     connecting: Boolean,
     arrivals: Int,
     error: String?,
@@ -74,6 +83,10 @@ fun DockScreen(
     var editing by remember { mutableStateOf<EditTarget?>(null) }
 
     var showKeys by remember { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    // Harbors the user has folded shut. Ephemeral by design — a fresh launch shows
+    // the whole fleet.
+    val collapsed = remember { mutableStateListOf<String>() }
     // Right after a session ends, the ferry is still coming back in — say so.
     var ferryReturning by remember { mutableStateOf(arrivals > 0) }
     LaunchedEffect(arrivals) {
@@ -91,6 +104,12 @@ fun DockScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (runningSessions.isNotEmpty()) {
+            RunningSessionsBar(
+                sessions = runningSessions,
+                onResume = onResumeSession,
+            )
+        }
         Spacer(Modifier.height(28.dp))
         Box(Modifier.fillMaxWidth()) {
             Text(
@@ -136,6 +155,31 @@ fun DockScreen(
             Spacer(Modifier.height(8.dp))
         }
 
+        // Search only earns its keep once the fleet grows — below that it's clutter.
+        if (hosts.size > 4) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("search the fleet", color = MistGrey) },
+                leadingIcon = {
+                    Icon(Icons.Outlined.Search, contentDescription = null, tint = MistGrey)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
+        val q = query.trim()
+        val filtered =
+            if (q.isBlank()) hosts
+            else hosts.filter { it.matches(q) }
+        // Sections: named harbors alphabetically, the unsorted mooring last. While a
+        // search is running we drop headers entirely and show one flat result list.
+        val sections = remember(filtered, q) { groupIntoHarbors(filtered, grouped = q.isBlank()) }
+
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -143,13 +187,40 @@ fun DockScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(hosts, key = { it.id }) { host ->
-                MooringCard(
-                    host = host,
-                    enabled = !connecting,
-                    onCross = { onConnect(host) },
-                    onEdit = { editing = EditTarget.Existing(host) },
-                )
+            sections.forEach { section ->
+                if (section.name != null) {
+                    item(key = "harbor:${section.name}") {
+                        HarborHeader(
+                            name = section.name,
+                            count = section.hosts.size,
+                            collapsed = section.name in collapsed,
+                            onToggle = {
+                                if (section.name in collapsed) collapsed.remove(section.name)
+                                else collapsed.add(section.name)
+                            },
+                        )
+                    }
+                }
+                if (section.name == null || section.name !in collapsed) {
+                    items(section.hosts, key = { it.id }) { host ->
+                        MooringCard(
+                            host = host,
+                            enabled = !connecting,
+                            onCross = { onConnect(host) },
+                            onEdit = { editing = EditTarget.Existing(host) },
+                        )
+                    }
+                }
+            }
+            if (filtered.isEmpty() && q.isNotBlank()) {
+                item(key = "no-results") {
+                    Text(
+                        "no moorings match \"$q\"",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MistGrey,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
             }
             item(key = "new-crossing") {
                 NewCrossingCard(
@@ -165,6 +236,9 @@ fun DockScreen(
         HostEditSheet(
             target = target,
             identities = identities,
+            harbors = remember(hosts) {
+                hosts.map { it.harbor.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+            },
             onDismiss = { editing = null },
             onCross = { draft ->
                 editing = null
@@ -200,6 +274,143 @@ sealed class EditTarget {
     data class Existing(val host: HostEntity) : EditTarget()
 }
 
+/**
+ * Lantern hues a mooring can fly — a small, curated set so the Dock stays a
+ * coherent palette rather than a paintbox. null = the default dimmed glow.
+ */
+val LanternHues: List<String?> = listOf(
+    null,
+    "#3ECFB2", // styx teal
+    "#D9A441", // obol gold
+    "#E0563E", // ember
+    "#6EA8FE", // sky
+    "#B98CFF", // amethyst
+    "#63D68B", // moss
+    "#E58CC4", // orchid
+)
+
+/** Parse a #RRGGBB lantern hue, falling back to the dimmed default. */
+fun lanternColor(hex: String?): androidx.compose.ui.graphics.Color =
+    hex?.let {
+        runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(it)) }
+            .getOrNull()
+    } ?: DeepTeal
+
+/** Does this mooring answer to a search query? Matches label, address, or harbor. */
+private fun HostEntity.matches(q: String): Boolean =
+    displayName.contains(q, ignoreCase = true) ||
+        host.contains(q, ignoreCase = true) ||
+        username.contains(q, ignoreCase = true) ||
+        harbor.contains(q, ignoreCase = true)
+
+/** One collapsible block of the Dock. [name] null = the headerless flat/unsorted run. */
+private data class HarborSection(val name: String?, val hosts: List<HostEntity>)
+
+/**
+ * Fold hosts into harbor sections. When [grouped] is false (a search is live) the
+ * whole list comes back as one nameless section. Otherwise: named harbors first,
+ * sorted; the unsorted moorings gathered under a final "unsorted" header — but only
+ * if named harbors exist at all, so a plain fleet stays a plain headerless list.
+ */
+private fun groupIntoHarbors(hosts: List<HostEntity>, grouped: Boolean): List<HarborSection> {
+    if (!grouped) return listOf(HarborSection(null, hosts))
+    val byHarbor = hosts.groupBy { it.harbor.trim() }
+    val named = byHarbor.keys.filter { it.isNotEmpty() }.sortedBy { it.lowercase() }
+    if (named.isEmpty()) return listOf(HarborSection(null, hosts))
+    val sections = named.map { HarborSection(it, byHarbor.getValue(it)) }
+    val unsorted = byHarbor[""].orEmpty()
+    return if (unsorted.isEmpty()) sections
+    else sections + HarborSection("unsorted", unsorted)
+}
+
+/**
+ * The strip of crossings already underway, shown atop the Dock while you're picking
+ * the next one — tap a chip to step back aboard. This is the "+"-from-terminal
+ * return path made visible.
+ */
+@Composable
+private fun RunningSessionsBar(
+    sessions: List<TerminalSession>,
+    onResume: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "underway",
+            style = MaterialTheme.typography.labelSmall,
+            color = MistGrey,
+        )
+        Spacer(Modifier.width(10.dp))
+        sessions.forEach { s ->
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onResume(s.id) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(StyxTeal),
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    s.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+}
+
+/** A harbor's collapsible header: a caret, its name, and the count of moorings within. */
+@Composable
+private fun HarborHeader(
+    name: String,
+    count: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (collapsed) "▸" else "▾",
+            style = MaterialTheme.typography.bodyMedium,
+            color = StyxTeal,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            name,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MistGrey,
+        )
+    }
+}
+
 @Composable
 private fun MooringCard(
     host: HostEntity,
@@ -217,13 +428,13 @@ private fun MooringCard(
             .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Mooring lantern. Reachability dots (live TCP dial) arrive with the fleet
-        // milestone — until then it's the dimmed glow of a known shore.
+        // Mooring lantern — the host's colour tag. Reachability dots (live TCP dial)
+        // arrive with the fleet milestone; until then it's a steady categorising glow.
         Box(
             modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(DeepTeal),
+                .background(lanternColor(host.colorHex)),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
