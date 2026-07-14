@@ -8,10 +8,15 @@ interface SshEngine {
     /**
      * Connect, authenticate, open a shell with a PTY, and wire it to [session]:
      * remote bytes → [TerminalSession.feedRemote], [TerminalSession.onOutput] → stdin,
-     * [TerminalSession.onResize] → window-change. Blocks until the shell is live;
-     * throws on failure. The returned handle owns the transport.
+     * [TerminalSession.onResize] → window-change. Host keys go through [verifier]
+     * (may block on a user trust decision). Blocks until the shell is live; throws
+     * on failure. The returned handle owns the transport.
      */
-    fun connectShell(config: ConnectConfig, session: TerminalSession): SshConnection
+    fun connectShell(
+        config: ConnectConfig,
+        session: TerminalSession,
+        verifier: KnownHostsVerifier,
+    ): SshConnection
 }
 
 interface SshConnection {

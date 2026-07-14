@@ -5,7 +5,6 @@ import net.schmizz.keepalive.KeepAliveProvider
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.PTYMode
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
@@ -21,16 +20,21 @@ private sealed class ChannelOp {
 
 class SshjEngine : SshEngine {
 
-    override fun connectShell(config: ConnectConfig, session: TerminalSession): SshConnection {
+    override fun connectShell(
+        config: ConnectConfig,
+        session: TerminalSession,
+        verifier: KnownHostsVerifier,
+    ): SshConnection {
         val sshConfig = DefaultConfig().apply {
             keepAliveProvider = KeepAliveProvider.KEEP_ALIVE
         }
         val client = SSHClient(sshConfig)
-        // v0.1 walking skeleton trusts on first sight. v0.2 replaces this with the
-        // Room-backed TOFU verifier + fingerprint sheet (docs/PLAN.md).
-        client.addHostKeyVerifier(PromiscuousVerifier())
+        client.addHostKeyVerifier(verifier)
         client.connectTimeout = 15_000
         client.timeout = 0 // interactive session: no read timeout
+        // Key exchange blocks on the TOFU sheet — a human comparing fingerprints
+        // takes longer than the 30s transport default. Give them five minutes.
+        client.transport.timeoutMs = 300_000
 
         try {
             client.connect(config.host, config.port)
