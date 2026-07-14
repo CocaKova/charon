@@ -24,14 +24,18 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.db.IdentityEntity
+import com.cocakova.charon.data.db.PortForwardDao
+import com.cocakova.charon.data.db.SnippetDao
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.presentation.dock.DockScreen
 import com.cocakova.charon.presentation.dock.TrustGate
+import com.cocakova.charon.presentation.sftp.FilesScreen
 import com.cocakova.charon.presentation.terminal.TerminalScreen
 import com.cocakova.charon.ssh.ConnectConfig
 import com.cocakova.charon.ssh.SessionManager
+import com.cocakova.charon.ssh.SftpTransfers
 import com.cocakova.charon.theme.CharonTheme
 import kotlinx.coroutines.launch
 
@@ -48,7 +52,11 @@ class MainActivity : FragmentActivity() {
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, app)
         setContent {
             CharonTheme {
-                CharonRoot(app.sessionManager, app.hostVault, app.keyVault, app.commandHistory)
+                CharonRoot(
+                    app.sessionManager, app.hostVault, app.keyVault,
+                    app.commandHistory, app.transfers,
+                    app.db.snippets(), app.db.portForwards(),
+                )
             }
         }
     }
@@ -92,12 +100,17 @@ class MainActivity : FragmentActivity() {
     }
 }
 
+private enum class Screen { DOCK, TERMINAL, FILES }
+
 @Composable
 private fun CharonRoot(
     sessionManager: SessionManager,
     hostVault: HostVault,
     keyVault: KeyVault,
     commandHistory: CommandHistory,
+    transfers: SftpTransfers,
+    snippetDao: SnippetDao,
+    portForwardDao: PortForwardDao,
 ) {
     val active by sessionManager.activeSession.collectAsState()
     val sessions by sessionManager.sessions.collectAsState()
@@ -105,12 +118,21 @@ private fun CharonRoot(
     val pendingTrust by sessionManager.pendingTrust.collectAsState()
     val hosts by hostVault.hosts.collectAsState(initial = emptyList())
     val identities by keyVault.identities.collectAsState(initial = emptyList())
+    val allSnippets by snippetDao.all().collectAsState(initial = emptyList())
+    val allForwards by portForwardDao.all().collectAsState(initial = emptyList())
+    val runningForwards by sessionManager.runningForwards.collectAsState()
+    val forwardError by sessionManager.forwardError.collectAsState()
     val scope = rememberCoroutineScope()
 
     val current = active
     // Terminal on screen whenever a session is active; null active = the Dock, with
-    // any live crossings still running in the background.
+    // any live crossings still running in the background. filesFor overlays the
+    // hold (SFTP) for one session; it clears itself if that session closes.
     val showTerminal = current != null
+    var filesFor by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sessions) {
+        if (filesFor != null && sessions.none { it.id == filesFor }) filesFor = null
+    }
 
     // Count returns from sea so the Dock can play the ferry docking on arrival.
     var atSea by remember { mutableStateOf(false) }
@@ -124,22 +146,48 @@ private fun CharonRoot(
         }
     }
 
-    // One crossfade for the whole crossing: the Dock -> terminal and back.
+    val screen = when {
+        filesFor != null -> Screen.FILES
+        showTerminal -> Screen.TERMINAL
+        else -> Screen.DOCK
+    }
+
+    // One crossfade for the whole crossing: the Dock -> terminal -> the hold.
     Crossfade(
-        targetState = showTerminal,
+        targetState = screen,
         animationSpec = tween(durationMillis = 500),
         label = "crossing",
-    ) { terminal ->
-        if (terminal && current != null) {
+    ) { target ->
+        if (target == Screen.FILES && filesFor != null) {
+            val id = filesFor!!
+            FilesScreen(
+                sessionLabel = sessionManager.labelFor(id) ?: "",
+                openSftp = { sessionManager.openSftp(id) },
+                transfers = transfers,
+                onBack = { filesFor = null },
+            )
+        } else if (target == Screen.TERMINAL && current != null) {
+            val hostId = sessionManager.hostIdFor(current.id)
             TerminalScreen(
                 session = current,
                 sessions = sessions,
                 commandHistory = commandHistory,
                 remoteContext = sessionManager.contextFor(current.id),
+                hostId = hostId,
+                snippets = allSnippets.filter { it.hostId == null || it.hostId == hostId },
+                forwards = allForwards.filter { it.hostId == hostId },
+                runningForwards = runningForwards,
+                forwardError = forwardError,
                 onSwitch = { sessionManager.switchTo(it) },
                 onClose = { sessionManager.close(it) },
                 onReconnect = { sessionManager.forceReconnect(it) },
                 onNewSession = { sessionManager.showDock() },
+                onFiles = { filesFor = current.id },
+                onSaveSnippet = { s -> scope.launch { snippetDao.upsert(s) } },
+                onDeleteSnippet = { id -> scope.launch { snippetDao.delete(id) } },
+                onToggleForward = { fwd -> sessionManager.toggleForward(current.id, fwd) },
+                onSaveForward = { fwd -> scope.launch { portForwardDao.upsert(fwd) } },
+                onDeleteForward = { id -> scope.launch { portForwardDao.delete(id) } },
             )
         } else {
             DockScreen(

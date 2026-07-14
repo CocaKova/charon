@@ -5,7 +5,12 @@ import net.schmizz.keepalive.KeepAliveProvider
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.PTYMode
+import net.schmizz.sshj.connection.channel.direct.Parameters
+import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
+import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
 import net.schmizz.sshj.userauth.password.PasswordUtils
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -158,6 +163,69 @@ class SshjEngine : SshEngine {
                         runCatching { probe.close() }
                     }
                 }.getOrNull()
+
+                override fun openSftp(): SftpChannel? =
+                    runCatching { SshjSftp(client.newSFTPClient()) }.getOrNull()
+
+                override fun startForward(
+                    type: String,
+                    bindPort: Int,
+                    targetHost: String,
+                    targetPort: Int,
+                ): ForwardHandle = when (type) {
+                    "L" -> {
+                        // Phone listens; each accepted socket rides a direct-tcpip channel.
+                        val ss = ServerSocket().apply {
+                            reuseAddress = true
+                            bind(InetSocketAddress("127.0.0.1", bindPort))
+                        }
+                        val forwarder = client.newLocalPortForwarder(
+                            Parameters("127.0.0.1", bindPort, targetHost, targetPort),
+                            ss,
+                        )
+                        thread(name = "charon-fwd-L-$bindPort", isDaemon = true) {
+                            runCatching { forwarder.listen() }
+                        }
+                        object : ForwardHandle {
+                            override fun stop() {
+                                runCatching { ss.close() }
+                            }
+                        }
+                    }
+                    "R" -> {
+                        // Server listens; sshj hands each connection back and we
+                        // socket it onward from the phone's side of the world.
+                        val forward = client.remotePortForwarder.bind(
+                            RemotePortForwarder.Forward(bindPort),
+                            SocketForwardingConnectListener(
+                                InetSocketAddress(targetHost, targetPort),
+                            ),
+                        )
+                        object : ForwardHandle {
+                            override fun stop() {
+                                runCatching { client.remotePortForwarder.cancel(forward) }
+                            }
+                        }
+                    }
+                    "D" -> {
+                        // Charon's own SOCKS5 riding direct-tcpip channels.
+                        val socks = Socks5Server(bindPort) { host, port ->
+                            val ch = client.newDirectConnection(host, port)
+                            object : Socks5Server.Tunnel {
+                                override val input get() = ch.inputStream
+                                override val output get() = ch.outputStream
+                                override fun close() {
+                                    runCatching { ch.close() }
+                                }
+                            }
+                        }
+                        socks.start()
+                        object : ForwardHandle {
+                            override fun stop() = socks.stop()
+                        }
+                    }
+                    else -> error("unknown channel type $type")
+                }
             }
         } catch (e: Exception) {
             runCatching { client.close() }

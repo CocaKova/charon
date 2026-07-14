@@ -76,6 +76,40 @@ data class KnownHostEntity(
     val addedAt: Long,
 )
 
+/**
+ * A rehearsed line — one command kept at hand. Global by default; [hostId] pins it
+ * to a single mooring (only that host's snippet bar shows it). UUID + lastModified
+ * for the vault merge, like everything else.
+ */
+@Entity(tableName = "snippets")
+data class SnippetEntity(
+    @PrimaryKey val id: String,
+    val name: String,               // short chip label
+    val command: String,
+    val hostId: String?,            // null = every host
+    val sortOrder: Int,
+    val createdAt: Long,
+    val lastModified: Long,
+)
+
+/**
+ * A charted channel: one port carried across the river. [type] is "L" (local →
+ * remote), "R" (remote → local) or "D" (dynamic SOCKS5 — [targetHost]/[targetPort]
+ * unused). [autoStart] channels open with every crossing of their host.
+ */
+@Entity(tableName = "port_forwards")
+data class PortForwardEntity(
+    @PrimaryKey val id: String,
+    val hostId: String,
+    val type: String,               // "L" | "R" | "D"
+    val bindPort: Int,              // listening side: phone for L/D, server for R
+    val targetHost: String,         // "" for D
+    val targetPort: Int,            // 0 for D
+    val autoStart: Boolean,
+    val createdAt: Long,
+    val lastModified: Long,
+)
+
 @Dao
 interface HostDao {
     @Query("SELECT * FROM hosts ORDER BY lastConnectedAt DESC, createdAt DESC")
@@ -124,15 +158,47 @@ interface KnownHostDao {
     suspend fun upsert(entry: KnownHostEntity)
 }
 
+@Dao
+interface SnippetDao {
+    @Query("SELECT * FROM snippets ORDER BY sortOrder, createdAt")
+    fun all(): Flow<List<SnippetEntity>>
+
+    @Upsert
+    suspend fun upsert(snippet: SnippetEntity)
+
+    @Query("DELETE FROM snippets WHERE id = :id")
+    suspend fun delete(id: String)
+}
+
+@Dao
+interface PortForwardDao {
+    @Query("SELECT * FROM port_forwards ORDER BY createdAt")
+    fun all(): Flow<List<PortForwardEntity>>
+
+    @Query("SELECT * FROM port_forwards WHERE hostId = :hostId ORDER BY createdAt")
+    suspend fun forHost(hostId: String): List<PortForwardEntity>
+
+    @Upsert
+    suspend fun upsert(forward: PortForwardEntity)
+
+    @Query("DELETE FROM port_forwards WHERE id = :id")
+    suspend fun delete(id: String)
+}
+
 @Database(
-    entities = [HostEntity::class, KnownHostEntity::class, IdentityEntity::class],
-    version = 4,
+    entities = [
+        HostEntity::class, KnownHostEntity::class, IdentityEntity::class,
+        SnippetEntity::class, PortForwardEntity::class,
+    ],
+    version = 5,
     exportSchema = false,
 )
 abstract class CharonDb : RoomDatabase() {
     abstract fun hosts(): HostDao
     abstract fun knownHosts(): KnownHostDao
     abstract fun identities(): IdentityDao
+    abstract fun snippets(): SnippetDao
+    abstract fun portForwards(): PortForwardDao
 
     companion object {
         // v0.2 → v0.3: keys of passage.
@@ -167,9 +233,30 @@ abstract class CharonDb : RoomDatabase() {
             }
         }
 
+        // v0.6 → v0.7: snippets + charted channels (port forwards).
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `snippets` (
+                        `id` TEXT NOT NULL, `name` TEXT NOT NULL, `command` TEXT NOT NULL,
+                        `hostId` TEXT, `sortOrder` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`))""",
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `port_forwards` (
+                        `id` TEXT NOT NULL, `hostId` TEXT NOT NULL, `type` TEXT NOT NULL,
+                        `bindPort` INTEGER NOT NULL, `targetHost` TEXT NOT NULL,
+                        `targetPort` INTEGER NOT NULL, `autoStart` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`))""",
+                )
+            }
+        }
+
         fun build(context: Context): CharonDb =
             Room.databaseBuilder(context, CharonDb::class.java, "charon.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }
