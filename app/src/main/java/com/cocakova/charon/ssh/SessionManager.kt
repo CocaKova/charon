@@ -6,6 +6,8 @@ import android.net.Network
 import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.data.db.HostDao
 import com.cocakova.charon.data.db.KnownHostDao
+import com.cocakova.charon.data.db.PortForwardDao
+import com.cocakova.charon.data.db.PortForwardEntity
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.service.ConnectionService
 import com.cocakova.charon.theme.TerminalSchemes
@@ -36,6 +38,7 @@ class SessionManager(
     private val hostDao: HostDao,
     knownHostDao: KnownHostDao,
     private val commandHistory: CommandHistory,
+    private val portForwardDao: PortForwardDao,
     private val engine: SshEngine = SshjEngine(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -56,6 +59,8 @@ class SessionManager(
         var reconnectJob: Job? = null
         /** Live host knowledge for smart autofill; probes ride this session's transport. */
         var remote: RemoteContext? = null
+        /** Charted channels currently open on this crossing: forwardId → handle. */
+        val forwards = ConcurrentHashMap<String, ForwardHandle>()
     }
 
     private val managed = ConcurrentHashMap<String, Managed>()
@@ -64,6 +69,12 @@ class SessionManager(
     val activeSession = MutableStateFlow<TerminalSession?>(null)
     private val activeId = MutableStateFlow<String?>(null)
     val lastError = MutableStateFlow<String?>(null)
+
+    /** Forward-ids of every charted channel currently open, across all crossings. */
+    val runningForwards = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Last channel failure (port taken, refused) — shown inside the channels sheet. */
+    val forwardError = MutableStateFlow<String?>(null)
 
     /** Set while the ferryman waits on a trust decision; the UI resolves it. */
     val pendingTrust = MutableStateFlow<PendingTrust?>(null)
@@ -146,6 +157,7 @@ class SessionManager(
         ms.closed = true
         ms.reconnectJob?.cancel()
         ms.watchJob?.cancel()
+        dropForwards(ms)
         val doomed = ms.connection
         ms.connection = null
         sessions.update { list -> list.filterNot { it.id == id } }
@@ -180,6 +192,9 @@ class SessionManager(
             try {
                 ms.connection = engine.connectShell(ms.config, ms.session, verifier)
                 ms.hostId?.let { hostDao.touchConnected(it, System.currentTimeMillis()) }
+                // Auto-start charted channels here, not in the watcher — the state
+                // flips Connected inside connectShell, before ms.connection is set.
+                autoStartForwards(ms)
                 updateService()
             } catch (e: Exception) {
                 if (firstAttempt) lastError.value = e.message ?: e.javaClass.simpleName
@@ -202,7 +217,10 @@ class SessionManager(
                         // change between redials; the probe is one cheap exec).
                         ms.remote?.refreshCommands()
                     }
-                    is TerminalSession.State.Disconnected ->
+                    is TerminalSession.State.Disconnected -> {
+                        // The channels died with the transport; drop the handles so a
+                        // redial can chart them fresh.
+                        dropForwards(ms)
                         // Redial only a true drop of an established crossing — never a
                         // clean `exit`, never a never-connected first attempt.
                         if (!ms.closed && !state.clean &&
@@ -210,6 +228,7 @@ class SessionManager(
                         ) {
                             beginReconnect(ms)
                         }
+                    }
                     else -> {}
                 }
                 updateService()
@@ -231,6 +250,60 @@ class SessionManager(
         }
     }
 
+    // ---- charted channels (port forwards) --------------------------------------------
+
+    /** Open or close one charted channel on a live crossing. */
+    fun toggleForward(sessionId: String, fwd: PortForwardEntity) {
+        val ms = managed[sessionId] ?: return
+        val open = ms.forwards.remove(fwd.id)
+        if (open != null) {
+            scope.launch { runCatching { open.stop() } }
+            publishForwards()
+            return
+        }
+        scope.launch {
+            try {
+                val conn = ms.connection ?: error("the crossing isn't up")
+                ms.forwards[fwd.id] = conn.startForward(
+                    fwd.type, fwd.bindPort, fwd.targetHost, fwd.targetPort,
+                )
+                forwardError.value = null
+            } catch (e: Exception) {
+                forwardError.value = e.message ?: "the channel could not be charted"
+            }
+            publishForwards()
+        }
+    }
+
+    /** Chart every autoStart channel of this crossing's host. Runs post-connect. */
+    private suspend fun autoStartForwards(ms: Managed) {
+        val hostId = ms.hostId ?: return
+        val conn = ms.connection ?: return
+        portForwardDao.forHost(hostId).filter { it.autoStart }.forEach { fwd ->
+            if (ms.closed || ms.forwards.containsKey(fwd.id)) return@forEach
+            runCatching {
+                ms.forwards[fwd.id] = conn.startForward(
+                    fwd.type, fwd.bindPort, fwd.targetHost, fwd.targetPort,
+                )
+            }.onFailure { forwardError.value = it.message }
+        }
+        publishForwards()
+    }
+
+    /** Stop-and-forget every channel on a crossing (transport died or session closed). */
+    private fun dropForwards(ms: Managed) {
+        val doomed = ms.forwards.values.toList()
+        ms.forwards.clear()
+        if (doomed.isNotEmpty()) {
+            scope.launch { doomed.forEach { runCatching { it.stop() } } }
+        }
+        publishForwards()
+    }
+
+    private fun publishForwards() {
+        runningForwards.value = managed.values.flatMap { it.forwards.keys }.toSet()
+    }
+
     /** Carry a public key to a host using its current password authentication. */
     suspend fun grantPassage(config: ConnectConfig, publicLine: String) {
         withContext(Dispatchers.IO) {
@@ -242,6 +315,15 @@ class SessionManager(
 
     /** The autofill host-context for a live session, or null once it's closed. */
     fun contextFor(id: String): RemoteContext? = managed[id]?.remote
+
+    /** A fresh SFTP channel on a live session's transport. Blocking; call off-main. */
+    fun openSftp(id: String): SftpChannel? = managed[id]?.connection?.openSftp()
+
+    /** The session's display label, for chrome that outlives the object (files view). */
+    fun labelFor(id: String): String? = managed[id]?.session?.label
+
+    /** The saved-host id behind a session, or null for a quick connect. */
+    fun hostIdFor(id: String): String? = managed[id]?.hostId
 
     private fun refreshActive() {
         activeSession.value = sessions.value.firstOrNull { it.id == activeId.value }

@@ -64,7 +64,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.autocomplete.Completer
 import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.autocomplete.Suggestion
+import com.cocakova.charon.data.db.PortForwardEntity
+import com.cocakova.charon.data.db.SnippetEntity
 import com.cocakova.charon.data.repository.CommandHistory
+import com.cocakova.charon.presentation.forwards.ForwardsSheet
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
@@ -81,10 +84,21 @@ fun TerminalScreen(
     sessions: List<TerminalSession>,
     commandHistory: CommandHistory,
     remoteContext: RemoteContext?,
+    hostId: String?,
+    snippets: List<SnippetEntity>,
+    forwards: List<PortForwardEntity>,
+    runningForwards: Set<String>,
+    forwardError: String?,
     onSwitch: (String) -> Unit,
     onClose: (String) -> Unit,
     onReconnect: (String) -> Unit,
     onNewSession: () -> Unit,
+    onFiles: () -> Unit,
+    onSaveSnippet: (SnippetEntity) -> Unit,
+    onDeleteSnippet: (String) -> Unit,
+    onToggleForward: (PortForwardEntity) -> Unit,
+    onSaveForward: (PortForwardEntity) -> Unit,
+    onDeleteForward: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by session.state.collectAsState()
@@ -146,6 +160,9 @@ fun TerminalScreen(
         Completer.complete(draft, history, remoteContext)
     }
 
+    // Charted channels sheet, raised from the switcher's ⇆.
+    var showForwards by remember { mutableStateOf(false) }
+
     // Cycle a modifier: tap toggles off<->armed (a lock is cleared by a tap too).
     fun tapMod(s: Sticky) = if (s == Sticky.OFF) Sticky.ARMED else Sticky.OFF
     // Long-press latches or releases the lock.
@@ -163,6 +180,8 @@ fun TerminalScreen(
             onSwitch = onSwitch,
             onClose = onClose,
             onNewSession = onNewSession,
+            onFiles = onFiles,
+            onForwards = { showForwards = true },
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // The IME anchor fills the terminal area (a sane rect for cursor-anchor
@@ -259,10 +278,8 @@ fun TerminalScreen(
                 else -> {}
             }
         }
-        // Smart autofill: tapping a chip types only the missing tail — our tracker
-        // knows exactly what's already on the line, so the remote echoes it in place.
-        // A token completion carries a trailing space, which cascades straight into
-        // the next word's suggestions (tmux → attach → -t → the live session names).
+        // One strip, two tenants: an empty line shows the rehearsed snippets; the
+        // moment typing starts, smart autofill takes the stage. They never fight.
         if (suggestions.isNotEmpty()) {
             CommandSuggestions(
                 suggestions = suggestions,
@@ -271,6 +288,18 @@ fun TerminalScreen(
                     session.sendText(s.insert)
                     session.trackInput(s.insert)
                 },
+            )
+        } else if (draft.isBlank() && state is TerminalSession.State.Connected) {
+            SnippetBar(
+                snippets = snippets,
+                hostId = hostId,
+                onType = { cmd ->
+                    session.scrollToBottom()
+                    session.sendText(cmd)
+                    session.trackInput(cmd)
+                },
+                onSave = onSaveSnippet,
+                onDelete = onDeleteSnippet,
             )
         }
         AccessoryRow(
@@ -299,6 +328,20 @@ fun TerminalScreen(
             },
         )
     }
+
+    if (showForwards) {
+        ForwardsSheet(
+            sessionLabel = session.label,
+            hostId = hostId,
+            forwards = forwards,
+            running = runningForwards,
+            error = forwardError,
+            onToggle = onToggleForward,
+            onSave = onSaveForward,
+            onDelete = onDeleteForward,
+            onDismiss = { showForwards = false },
+        )
+    }
 }
 
 /**
@@ -313,6 +356,8 @@ private fun SessionSwitcher(
     onSwitch: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewSession: () -> Unit,
+    onFiles: () -> Unit,
+    onForwards: () -> Unit,
 ) {
     Column {
         Row(
@@ -342,6 +387,32 @@ private fun SessionSwitcher(
                     "+",
                     style = MaterialTheme.typography.titleMedium,
                     color = StyxTeal,
+                )
+            }
+            // The hold: this session's SFTP deck.
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onFiles)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "⇅",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = ObolGold,
+                )
+            }
+            // Charted channels: this session's port forwards.
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onForwards)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "⇆",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MistGrey,
                 )
             }
         }

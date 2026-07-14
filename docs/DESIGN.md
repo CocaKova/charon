@@ -113,3 +113,20 @@ A homelab grows past a flat list, so the Dock categorises without clutter:
 - **Underway strip** — when crossings are live and you've stepped back to the Dock (the
   switcher's **+**), a row of tap-to-resume chips rides the top: the two faces of the
   one session list.
+
+## The Hold (v0.6 — SFTP)
+
+The ferry carries cargo, and it's part of the fare (Termius paywalls SFTP; Charon
+never will). The gold **⇅** in the session switcher opens the active session's deck:
+
+- **Single pane**, JetBrains Mono, quiet sigils: directories are teal doors (`▸`),
+  files bone cargo (`·`), symlinks `⇝`; size + mtime in mist. `↰ ..` climbs.
+- **Cargo sheet** (tap a file / long-press anything): **carry ashore** (download via
+  SAF — the user points at the landing spot), **rename**, **release into the river**
+  (delete, ember, with a plain-words confirm). **⇡ aboard** in the top bar uploads
+  any SAF document into the current directory; **+dir** and **↻** round it out.
+- **The ledger** — transfers stream over their own channels (a long pull never blocks
+  browsing), show live progress rows at the bottom (teal pulls, gold pushes), and
+  **resume themselves** from the landed byte offset through hiccups. The FGS keeps
+  them alive in the background.
+- Errors stay in-theme but honest: "the hold is unreachable", then a retry.

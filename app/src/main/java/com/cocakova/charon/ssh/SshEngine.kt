@@ -37,6 +37,28 @@ interface SshConnection {
      * (installed commands, running tmux sessions…). Blocking; call off-main.
      */
     fun exec(command: String, timeoutSeconds: Int = 5): String?
+
+    /**
+     * Open a fresh SFTP channel on the live transport, or null if it can't be had
+     * (server without the subsystem, transport mid-death). Each caller gets its own:
+     * the browser holds one, every transfer opens another, so a long pull never
+     * blocks directory listings. Blocking; call off-main.
+     */
+    fun openSftp(): SftpChannel?
+
+    /**
+     * Chart a channel across the crossing. [type] is "L" (phone :bindPort →
+     * [targetHost]:[targetPort] as seen from the server), "R" (server :bindPort →
+     * target as seen from the phone) or "D" (SOCKS5 proxy on phone :bindPort;
+     * target args unused). Throws if the port can't be bound. Blocking; call
+     * off-main. The handle outlives this call until stopped or the transport dies.
+     */
+    fun startForward(type: String, bindPort: Int, targetHost: String, targetPort: Int): ForwardHandle
+}
+
+/** One charted channel, running until stopped (or the transport under it dies). */
+interface ForwardHandle {
+    fun stop()
 }
 
 data class ConnectConfig(

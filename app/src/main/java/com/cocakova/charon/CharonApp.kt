@@ -6,6 +6,7 @@ import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.ssh.SessionManager
+import com.cocakova.charon.ssh.SftpTransfers
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
 
@@ -22,6 +23,8 @@ class CharonApp : Application() {
         private set
     lateinit var commandHistory: CommandHistory
         private set
+    lateinit var transfers: SftpTransfers
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -31,7 +34,10 @@ class CharonApp : Application() {
         keyVault = KeyVault(db.identities())
         hostVault = HostVault(db.hosts(), keyVault)
         commandHistory = CommandHistory(this)
-        sessionManager = SessionManager(this, db.hosts(), db.knownHosts(), commandHistory)
+        sessionManager = SessionManager(
+            this, db.hosts(), db.knownHosts(), commandHistory, db.portForwards(),
+        )
+        transfers = SftpTransfers(this)
     }
 
     private fun installBouncyCastle() {
