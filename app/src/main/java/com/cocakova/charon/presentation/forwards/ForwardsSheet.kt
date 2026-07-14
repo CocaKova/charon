@@ -372,8 +372,15 @@ private fun AddChannelForm(
                 colors = SwitchDefaults.colors(checkedTrackColor = StyxTeal),
             )
             Spacer(Modifier.width(8.dp))
-            Text("chart on every crossing", style = MaterialTheme.typography.bodyMedium, color = MistGrey)
-            Spacer(Modifier.weight(1f))
+            // The label is the flexible one — it wraps before the buttons get
+            // squeezed into vertical letter-stacks.
+            Text(
+                "chart on every crossing",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MistGrey,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
             TextButton(onClick = onCancel) { Text("cancel", color = MistGrey) }
             Button(
                 onClick = {
