@@ -1,9 +1,14 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +35,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cocakova.charon.data.db.SnippetEntity
@@ -56,6 +64,7 @@ fun SnippetBar(
 ) {
     var editing by remember { mutableStateOf<SnippetEntity?>(null) }
     var addingNew by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
 
     Row(
         modifier = Modifier
@@ -66,13 +75,27 @@ fun SnippetBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         snippets.forEach { s ->
+            // The chip gives under the thumb and clicks like a key — the line is
+            // being typed for you, and it should feel that way.
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val give by animateFloatAsState(if (pressed) 0.94f else 1f, tween(100), label = "give")
             Row(
                 modifier = Modifier
+                    .scale(give)
                     .clip(RoundedCornerShape(9.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .combinedClickable(
-                        onClick = { onType(s.command) },
-                        onLongClick = { editing = s },
+                        interactionSource = interaction,
+                        indication = LocalIndication.current,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                            onType(s.command)
+                        },
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            editing = s
+                        },
                     )
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

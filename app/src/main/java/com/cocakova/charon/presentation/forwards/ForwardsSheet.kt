@@ -1,5 +1,17 @@
 package com.cocakova.charon.presentation.forwards
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +36,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,8 +45,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import com.cocakova.charon.data.db.PortForwardEntity
 import com.cocakova.charon.theme.BoneWhite
 import com.cocakova.charon.theme.MistGrey
@@ -64,9 +80,36 @@ fun ForwardsSheet(
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<PortForwardEntity?>(null) }
+    // The channel mid-toggle: its dot pulses gold until the running set answers
+    // (haptic confirm), an error lands (haptic reject), or the attempt goes stale.
+    var charting by remember { mutableStateOf<String?>(null) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(running) {
+        if (charting != null) {
+            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            charting = null
+        }
+    }
+    LaunchedEffect(error) {
+        if (error != null && charting != null) {
+            haptic.performHapticFeedback(HapticFeedbackType.Reject)
+            charting = null
+        }
+    }
+    LaunchedEffect(charting) {
+        if (charting != null) {
+            delay(8_000)
+            charting = null
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+        Column(
+            Modifier
+                .animateContentSize()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
             Text(
                 "charted channels — $sessionLabel",
                 style = MaterialTheme.typography.titleMedium,
@@ -106,20 +149,26 @@ fun ForwardsSheet(
                 ChannelRow(
                     fwd = fwd,
                     open = fwd.id in running,
-                    onToggle = { onToggle(fwd) },
+                    charting = charting == fwd.id,
+                    onToggle = { charting = fwd.id; onToggle(fwd) },
                     onAutoChange = { onSave(fwd.copy(autoStart = it, lastModified = System.currentTimeMillis())) },
                     onLongPress = { deleting = fwd },
                 )
             }
 
             Spacer(Modifier.height(10.dp))
-            if (adding) {
+            AnimatedVisibility(
+                visible = adding,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
                 AddChannelForm(
                     hostId = hostId,
                     onSave = { onSave(it); adding = false },
                     onCancel = { adding = false },
                 )
-            } else {
+            }
+            AnimatedVisibility(visible = !adding, enter = fadeIn(), exit = fadeOut()) {
                 TextButton(onClick = { adding = true }) {
                     Text("+ chart a channel", color = StyxTeal)
                 }
@@ -156,6 +205,7 @@ fun ForwardsSheet(
 private fun ChannelRow(
     fwd: PortForwardEntity,
     open: Boolean,
+    charting: Boolean,
     onToggle: () -> Unit,
     onAutoChange: (Boolean) -> Unit,
     onLongPress: () -> Unit,
@@ -190,17 +240,39 @@ private fun ChannelRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // The dot eases between states; while a toggle is in flight it
+                // pulses gold — the channel is being charted, not stuck.
+                val dotColor by animateColorAsState(
+                    when {
+                        charting -> ObolGold
+                        open -> StyxTeal
+                        else -> MistGrey.copy(alpha = 0.4f)
+                    },
+                    tween(250),
+                    label = "channel-dot",
+                )
+                val pulse by rememberInfiniteTransition(label = "charting")
+                    .animateFloat(
+                        0.35f, 1f,
+                        infiniteRepeatable(tween(500), RepeatMode.Reverse),
+                        label = "pulse",
+                    )
                 Box(
                     Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(if (open) StyxTeal else MistGrey.copy(alpha = 0.4f)),
+                        .background(dotColor.copy(alpha = if (charting) pulse else 1f)),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (open) "open — tap to close" else "tap to open",
+                    when {
+                        charting && open -> "closing the channel…"
+                        charting -> "charting…"
+                        open -> "open — tap to close"
+                        else -> "tap to open"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MistGrey,
+                    color = if (charting) ObolGold else MistGrey,
                 )
             }
         }

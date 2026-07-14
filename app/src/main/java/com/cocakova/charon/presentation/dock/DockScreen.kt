@@ -1,10 +1,19 @@
 package com.cocakova.charon.presentation.dock
 
 import android.text.format.DateUtils
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +52,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import com.cocakova.charon.data.db.IdentityEntity
@@ -81,6 +94,7 @@ fun DockScreen(
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
+    val haptic = LocalHapticFeedback.current
 
     var showKeys by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -195,9 +209,11 @@ fun DockScreen(
                             count = section.hosts.size,
                             collapsed = section.name in collapsed,
                             onToggle = {
+                                haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
                                 if (section.name in collapsed) collapsed.remove(section.name)
                                 else collapsed.add(section.name)
                             },
+                            modifier = Modifier.animateItem(),
                         )
                     }
                 }
@@ -208,6 +224,7 @@ fun DockScreen(
                             enabled = !connecting,
                             onCross = { onConnect(host) },
                             onEdit = { editing = EditTarget.Existing(host) },
+                            modifier = Modifier.animateItem(),
                         )
                     }
                 }
@@ -227,6 +244,7 @@ fun DockScreen(
                     enabled = !connecting,
                     firstMooring = hosts.isEmpty(),
                     onClick = { editing = EditTarget.New },
+                    modifier = Modifier.animateItem(),
                 )
             }
         }
@@ -347,6 +365,13 @@ private fun RunningSessionsBar(
             color = MistGrey,
         )
         Spacer(Modifier.width(10.dp))
+        // Live crossings breathe — a still dot reads as a dead one.
+        val breath by rememberInfiniteTransition(label = "underway")
+            .animateFloat(
+                0.55f, 1f,
+                infiniteRepeatable(tween(1400), RepeatMode.Reverse),
+                label = "breath",
+            )
         sessions.forEach { s ->
             Row(
                 modifier = Modifier
@@ -360,7 +385,7 @@ private fun RunningSessionsBar(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(StyxTeal),
+                        .background(StyxTeal.copy(alpha = breath)),
                 )
                 Spacer(Modifier.width(7.dp))
                 Text(
@@ -382,9 +407,12 @@ private fun HarborHeader(
     count: Int,
     collapsed: Boolean,
     onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    // One caret that turns, rather than two glyphs that swap.
+    val spin by animateFloatAsState(if (collapsed) -90f else 0f, tween(180), label = "caret")
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onToggle)
@@ -392,9 +420,10 @@ private fun HarborHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            if (collapsed) "▸" else "▾",
+            "▾",
             style = MaterialTheme.typography.bodyMedium,
             color = StyxTeal,
+            modifier = Modifier.rotate(spin),
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -417,14 +446,25 @@ private fun MooringCard(
     enabled: Boolean,
     onCross: () -> Unit,
     onEdit: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    // The card gives slightly under the thumb — a plank taking weight.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val give by animateFloatAsState(if (pressed) 0.98f else 1f, tween(120), label = "give")
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .scale(give)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onCross)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                onClick = onCross,
+            )
             .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -478,9 +518,10 @@ private fun NewCrossingCard(
     enabled: Boolean,
     firstMooring: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .border(1.dp, DeepTeal, RoundedCornerShape(12.dp))
