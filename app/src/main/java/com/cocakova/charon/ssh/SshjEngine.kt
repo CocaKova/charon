@@ -7,6 +7,7 @@ import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 private const val TAG = "CharonSsh"
@@ -20,37 +21,52 @@ private sealed class ChannelOp {
 
 class SshjEngine : SshEngine {
 
+    override fun installPublicKey(
+        config: ConnectConfig,
+        publicLine: String,
+        verifier: KnownHostsVerifier,
+    ) {
+        val client = client(verifier)
+        try {
+            client.connect(config.host, config.port)
+            authenticate(client, config)
+            val sshSession = client.startSession()
+            try {
+                val line = shellQuote(publicLine.trim())
+                val file = "\"\$HOME/.ssh/authorized_keys\""
+                val command = sshSession.exec(
+                    "umask 077 && mkdir -p \"\$HOME/.ssh\" && touch $file && " +
+                        "chmod 700 \"\$HOME/.ssh\" && chmod 600 $file && " +
+                        "{ grep -qxF $line $file || printf '%s\\n' $line >> $file; }",
+                )
+                command.join(30, TimeUnit.SECONDS)
+                val status = command.exitStatus
+                    ?: throw IllegalStateException("the courier timed out")
+                if (status != 0) {
+                    val detail = command.errorStream.bufferedReader().readText().trim()
+                    throw IllegalStateException(
+                        detail.ifBlank { "the remote host refused the key (exit $status)" },
+                    )
+                }
+            } finally {
+                runCatching { sshSession.close() }
+            }
+        } finally {
+            runCatching { client.close() }
+        }
+    }
+
     override fun connectShell(
         config: ConnectConfig,
         session: TerminalSession,
         verifier: KnownHostsVerifier,
     ): SshConnection {
-        val sshConfig = DefaultConfig().apply {
-            keepAliveProvider = KeepAliveProvider.KEEP_ALIVE
-        }
-        val client = SSHClient(sshConfig)
-        client.addHostKeyVerifier(verifier)
-        client.connectTimeout = 15_000
-        client.timeout = 0 // interactive session: no read timeout
-        // Key exchange blocks on the TOFU sheet — a human comparing fingerprints
-        // takes longer than the 30s transport default. Give them five minutes.
-        client.transport.timeoutMs = 300_000
+        val client = client(verifier)
 
         try {
             client.connect(config.host, config.port)
             client.connection.keepAlive.keepAliveInterval = 15
-
-            when {
-                config.privateKeyPem != null -> {
-                    val passwordFinder = config.keyPassphrase
-                        ?.let { PasswordUtils.createOneOff(it.toCharArray()) }
-                    val keys = client.loadKeys(config.privateKeyPem, null, passwordFinder)
-                    client.authPublickey(config.username, keys)
-                }
-                config.password != null ->
-                    client.authPassword(config.username, config.password)
-                else -> error("no authentication method provided")
-            }
+            authenticate(client, config)
 
             val sshSession = client.startSession()
             val (cols, rows) = synchronized(session.lock) {
@@ -122,4 +138,43 @@ class SshjEngine : SshEngine {
             throw e
         }
     }
+
+    private fun client(verifier: KnownHostsVerifier): SSHClient {
+        val sshConfig = DefaultConfig().apply {
+            keepAliveProvider = KeepAliveProvider.KEEP_ALIVE
+        }
+        return SSHClient(sshConfig).apply {
+            addHostKeyVerifier(verifier)
+            connectTimeout = 15_000
+            timeout = 0
+            // A human comparing a TOFU fingerprint may take longer than sshj's default.
+            transport.timeoutMs = 300_000
+        }
+    }
+
+    private fun authenticate(client: SSHClient, config: ConnectConfig) {
+        var keyFailure: Exception? = null
+        if (config.privateKeyPem != null) {
+            try {
+                val finder = config.keyPassphrase
+                    ?.let { PasswordUtils.createOneOff(it.toCharArray()) }
+                client.authPublickey(
+                    config.username,
+                    client.loadKeys(config.privateKeyPem, null, finder),
+                )
+                return
+            } catch (e: Exception) {
+                keyFailure = e
+            }
+        }
+        if (config.password != null) {
+            client.authPassword(config.username, config.password)
+            return
+        }
+        if (keyFailure != null) throw keyFailure
+        error("no authentication method provided")
+    }
 }
+
+internal fun shellQuote(value: String): String =
+    "'" + value.replace("'", "'\"'\"'") + "'"

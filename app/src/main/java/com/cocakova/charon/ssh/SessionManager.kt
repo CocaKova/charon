@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 /**
  * App-scoped owner of live sessions (Keryx-style manual DI: constructed once in
@@ -85,6 +86,13 @@ class SessionManager(
         // Teardown is network I/O too — never on the caller's (UI) thread.
         scope.launch { doomed?.disconnect() }
         ConnectionService.stop(appContext)
+    }
+
+    /** Carry a public key to a host using its current password authentication. */
+    suspend fun grantPassage(config: ConnectConfig, publicLine: String) {
+        withContext(Dispatchers.IO) {
+            engine.installPublicKey(config, publicLine, verifier)
+        }
     }
 
     /** Back out of a dead session's terminal to the Dock. */

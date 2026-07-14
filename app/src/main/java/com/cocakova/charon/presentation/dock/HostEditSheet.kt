@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -23,12 +25,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.theme.WarnEmber
 
@@ -41,6 +45,7 @@ import com.cocakova.charon.theme.WarnEmber
 @Composable
 fun HostEditSheet(
     target: EditTarget,
+    identities: List<IdentityEntity>,
     onDismiss: () -> Unit,
     onCross: (HostDraft) -> Unit,
     onSaveAndCross: (HostDraft) -> Unit,
@@ -52,10 +57,12 @@ fun HostEditSheet(
     var port by rememberSaveable(target) { mutableStateOf(existing?.port?.toString() ?: "22") }
     var username by rememberSaveable(target) { mutableStateOf(existing?.username ?: "") }
     var password by rememberSaveable(target) { mutableStateOf("") }
+    var identityId by rememberSaveable(target) { mutableStateOf(existing?.identityId) }
+    var identityMenu by remember { mutableStateOf(false) }
 
     val hasStoredPassword = existing?.passwordSealed != null
     val ready = host.isNotBlank() && username.isNotBlank() &&
-        (password.isNotBlank() || hasStoredPassword)
+        (identityId != null || password.isNotBlank() || hasStoredPassword)
 
     fun draft() = HostDraft(
         id = existing?.id,
@@ -64,6 +71,7 @@ fun HostEditSheet(
         port = port.toIntOrNull() ?: 22,
         username = username,
         password = password,
+        identityId = identityId,
     )
 
     ModalBottomSheet(
@@ -118,6 +126,35 @@ fun HostEditSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(12.dp))
+            val selectedIdentity = identities.find { it.id == identityId }
+            ExposedDropdownMenuBox(
+                expanded = identityMenu,
+                onExpandedChange = { identityMenu = !identityMenu },
+            ) {
+                OutlinedTextField(
+                    value = selectedIdentity?.name ?: "password only",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("identity") },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                )
+                ExposedDropdownMenu(
+                    expanded = identityMenu,
+                    onDismissRequest = { identityMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("password only") },
+                        onClick = { identityId = null; identityMenu = false },
+                    )
+                    identities.forEach { identity ->
+                        DropdownMenuItem(
+                            text = { Text(identity.name + if (identity.biometricGated) "  ·  fingerprint" else "") },
+                            onClick = { identityId = identity.id; identityMenu = false },
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = password,

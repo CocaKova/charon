@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Icon
@@ -37,10 +38,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.repository.HostDraft
-import com.cocakova.charon.presentation.components.BrailleSea
+import com.cocakova.charon.presentation.components.StyxCrossing
+import com.cocakova.charon.presentation.keys.KeysSheet
 import com.cocakova.charon.theme.DeepTeal
+import kotlinx.coroutines.delay
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.StyxTeal
 
@@ -52,15 +57,32 @@ import com.cocakova.charon.theme.StyxTeal
 @Composable
 fun DockScreen(
     hosts: List<HostEntity>,
+    identities: List<IdentityEntity>,
     connecting: Boolean,
+    arrivals: Int,
     error: String?,
     onConnect: (HostEntity) -> Unit,
     onQuickConnect: (HostDraft) -> Unit,
     onSave: (HostDraft) -> Unit,
     onDelete: (String) -> Unit,
+    onForgeKey: suspend (String, Boolean) -> Unit,
+    onImportKey: suspend (String, String, String?, Boolean) -> Unit,
+    onReleaseKey: suspend (String) -> Unit,
+    onGrantKey: suspend (HostEntity, IdentityEntity) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
+
+    var showKeys by remember { mutableStateOf(false) }
+    // Right after a session ends, the ferry is still coming back in — say so.
+    var ferryReturning by remember { mutableStateOf(arrivals > 0) }
+    LaunchedEffect(arrivals) {
+        if (arrivals > 0) {
+            ferryReturning = true
+            delay(3600)
+            ferryReturning = false
+        }
+    }
 
     Column(
         modifier = modifier
@@ -70,24 +92,39 @@ fun DockScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(28.dp))
+        Box(Modifier.fillMaxWidth()) {
+            Text(
+                "CHARON",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.Center),
+            )
+            IconButton(
+                onClick = { showKeys = true },
+                enabled = !connecting,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+            ) {
+                Icon(Icons.Outlined.Key, contentDescription = "keys of passage",
+                    tint = MaterialTheme.colorScheme.primary)
+            }
+        }
         Text(
-            "CHARON",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            if (connecting) "crossing the river…" else "the dock",
+            when {
+                connecting -> "crossing the river…"
+                ferryReturning -> "the ferry returns to shore"
+                else -> "the dock"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
-        Spacer(Modifier.height(16.dp))
-        BrailleSea(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            rows = 3,
-            frameMillis = if (connecting) 45 else 100,
+        Spacer(Modifier.height(12.dp))
+        StyxCrossing(
+            connecting = connecting,
+            arrivals = arrivals,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         if (error != null) {
             Text(
@@ -127,6 +164,7 @@ fun DockScreen(
     editing?.let { target ->
         HostEditSheet(
             target = target,
+            identities = identities,
             onDismiss = { editing = null },
             onCross = { draft ->
                 editing = null
@@ -143,6 +181,18 @@ fun DockScreen(
             },
         )
     }
+
+    if (showKeys) {
+        KeysSheet(
+            identities = identities,
+            hosts = hosts,
+            onDismiss = { showKeys = false },
+            onForge = onForgeKey,
+            onImport = onImportKey,
+            onRelease = onReleaseKey,
+            onGrant = onGrantKey,
+        )
+}
 }
 
 sealed class EditTarget {

@@ -3,6 +3,7 @@ package com.cocakova.charon
 import android.app.Application
 import com.cocakova.charon.data.db.CharonDb
 import com.cocakova.charon.data.repository.HostVault
+import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.ssh.SessionManager
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
@@ -14,6 +15,8 @@ class CharonApp : Application() {
         private set
     lateinit var hostVault: HostVault
         private set
+    lateinit var keyVault: KeyVault
+        private set
     lateinit var sessionManager: SessionManager
         private set
 
@@ -22,7 +25,8 @@ class CharonApp : Application() {
         installBouncyCastle()
         System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
         db = CharonDb.build(this)
-        hostVault = HostVault(db.hosts())
+        keyVault = KeyVault(db.identities())
+        hostVault = HostVault(db.hosts(), keyVault)
         sessionManager = SessionManager(this, db.hosts(), db.knownHosts())
     }
 
