@@ -15,14 +15,17 @@ data class HostDraft(
     val port: Int,
     val username: String,
     val password: String,
+    val identityId: String? = null,
 )
 
 /**
  * The Dock's storage: host CRUD with passwords sealed through the Keystore before
  * they ever reach Room. Plaintext exists only in memory, briefly, at save and at
- * connect.
+ * connect. Key-based crossings resolve their identity through [KeyVault], which
+ * may cost a fingerprint — hence connectConfig suspends, and returns null when
+ * the user backs out of the prompt.
  */
-class HostVault(private val dao: HostDao) {
+class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
 
     val hosts: Flow<List<HostEntity>> = dao.all()
 
@@ -42,6 +45,7 @@ class HostVault(private val dao: HostDao) {
                 port = draft.port,
                 username = draft.username.trim(),
                 passwordSealed = sealed,
+                identityId = draft.identityId,
                 lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                 createdAt = existing?.createdAt ?: now,
                 lastModified = now,
@@ -51,12 +55,52 @@ class HostVault(private val dao: HostDao) {
 
     suspend fun delete(id: String) = dao.delete(id)
 
-    /** Unseal and assemble the crossing config. */
-    fun connectConfig(host: HostEntity): ConnectConfig = ConnectConfig(
-        host = host.host,
-        port = host.port,
-        username = host.username,
-        password = host.passwordSealed
-            ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
-    )
+    /** Unseal and assemble the crossing config; null = biometric prompt dismissed. */
+    suspend fun connectConfig(host: HostEntity): ConnectConfig? {
+        val material = host.identityId?.let { id ->
+            val identity = keyVault.byId(id) ?: return@let null
+            keyVault.material(identity) ?: return null // bio prompt dismissed
+        }
+        return ConnectConfig(
+            host = host.host,
+            port = host.port,
+            username = host.username,
+            password = host.passwordSealed
+                ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
+            privateKeyPem = material?.privateKey,
+            keyPassphrase = material?.passphrase,
+        )
+    }
+
+    /** Same, for an unsaved draft straight off the edit sheet. */
+    suspend fun draftConfig(draft: HostDraft): ConnectConfig? {
+        val existing = draft.id?.let { dao.byId(it) }
+        val material = draft.identityId?.let { id ->
+            val identity = keyVault.byId(id) ?: return@let null
+            keyVault.material(identity) ?: return null
+        }
+        return ConnectConfig(
+            host = draft.host.trim(),
+            port = draft.port,
+            username = draft.username.trim(),
+            password = draft.password.takeIf { it.isNotBlank() }
+                ?: existing?.passwordSealed
+                    ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
+            privateKeyPem = material?.privateKey,
+            keyPassphrase = material?.passphrase,
+        )
+    }
+
+    /** Password-only config used to carry a new public key to a saved host. */
+    suspend fun courierConfig(host: HostEntity): ConnectConfig? {
+        val password = host.passwordSealed
+            ?.let { String(SecretVault.open(it), Charsets.UTF_8) }
+            ?: return null
+        return ConnectConfig(
+            host = host.host,
+            port = host.port,
+            username = host.username,
+            password = password,
+        )
+    }
 }

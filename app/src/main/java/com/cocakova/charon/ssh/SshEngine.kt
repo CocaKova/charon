@@ -17,6 +17,13 @@ interface SshEngine {
         session: TerminalSession,
         verifier: KnownHostsVerifier,
     ): SshConnection
+
+    /** Install one public key through a short-lived, verified SSH connection. */
+    fun installPublicKey(
+        config: ConnectConfig,
+        publicLine: String,
+        verifier: KnownHostsVerifier,
+    )
 }
 
 interface SshConnection {
