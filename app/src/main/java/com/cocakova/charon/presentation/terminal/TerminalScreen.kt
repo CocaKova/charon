@@ -9,7 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,8 +43,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.ssh.TerminalSession
@@ -59,10 +62,15 @@ fun TerminalScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by session.state.collectAsState()
+    val selection by session.selection.collectAsState()
+    val clipboard = LocalClipboardManager.current
     var ctrlArmed by remember { mutableStateOf(false) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
     val inputFocus = remember { FocusRequester() }
     val prefs = LocalContext.current.getSharedPreferences("charon", Context.MODE_PRIVATE)
+    // Pinch-zoomable font size, persisted; clamped to a legible band.
+    var fontSizeSp by remember { mutableFloatStateOf(prefs.getFloat("font_size", 13f)) }
+    LaunchedEffect(fontSizeSp) { prefs.edit().putFloat("font_size", fontSizeSp).apply() }
     var inputMode by remember {
         mutableStateOf(
             if (prefs.getString("input_mode", "predictive") == "raw") TerminalInputView.Mode.RAW
@@ -110,17 +118,37 @@ fun TerminalScreen(
             )
             TerminalView(
                 session = session,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(session) {
-                        detectTapGestures(
-                            onTap = {
-                                runCatching { inputFocus.requestFocus() }
-                                inputView?.showKeyboard()
-                            },
-                        )
-                    },
+                modifier = Modifier.fillMaxSize(),
+                fontSizeSp = fontSizeSp,
+                onRequestFocus = {
+                    runCatching { inputFocus.requestFocus() }
+                    inputView?.showKeyboard()
+                },
+                onZoom = { zoom ->
+                    fontSizeSp = (fontSizeSp * zoom).coerceIn(8f, 32f)
+                },
             )
+
+            // Copy affordance: a teal pill that surfaces while a selection holds.
+            if (selection != null) {
+                Text(
+                    "copy",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(StyxTeal)
+                        .clickable {
+                            session.copySelection()?.let {
+                                clipboard.setText(AnnotatedString(it))
+                            }
+                            session.clearSelection()
+                        }
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
             if (state is TerminalSession.State.Disconnected) {
                 Column(
                     modifier = Modifier
@@ -151,6 +179,7 @@ fun TerminalScreen(
                 session.sendText(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp))
             },
             onText = { sendText(it) },
+            onPaste = { clipboard.getText()?.text?.let { session.paste(it) } },
             rawInput = inputMode == TerminalInputView.Mode.RAW,
             onToggleInputMode = {
                 inputMode = if (inputMode == TerminalInputView.Mode.RAW) {

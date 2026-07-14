@@ -47,6 +47,7 @@ fun AccessoryRow(
     onToggleCtrl: () -> Unit,
     onKey: (KeyEncoder.Key) -> Unit,
     onText: (String) -> Unit,
+    onPaste: () -> Unit,
     rawInput: Boolean,
     onToggleInputMode: () -> Unit,
     modifier: Modifier = Modifier,
@@ -70,6 +71,7 @@ fun AccessoryRow(
         AccessoryKey("/") { onText("/") }
         AccessoryKey("|") { onText("|") }
         AccessoryKey("~") { onText("~") }
+        AccessoryKey("paste") { onPaste() }
         AccessoryKey("pgup") { onKey(KeyEncoder.Key.PAGE_UP) }
         AccessoryKey("pgdn") { onKey(KeyEncoder.Key.PAGE_DOWN) }
         AccessoryKey("home") { onKey(KeyEncoder.Key.HOME) }

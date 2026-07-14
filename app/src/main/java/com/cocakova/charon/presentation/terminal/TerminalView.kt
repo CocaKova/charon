@@ -3,9 +3,13 @@ package com.cocakova.charon.presentation.terminal
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,8 +17,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -29,6 +35,7 @@ import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.CellAttrs
 import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.TerminalEmulator
+import com.cocakova.charon.terminal.TextSelection
 
 /**
  * The grid renderer: run-batched `nativeCanvas.drawText` with cached Paints, frame-
@@ -42,6 +49,8 @@ fun TerminalView(
     session: TerminalSession,
     modifier: Modifier = Modifier,
     fontSizeSp: Float = 13f,
+    onRequestFocus: () -> Unit = {},
+    onZoom: (Float) -> Unit = {},
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -52,6 +61,7 @@ fun TerminalView(
             ?: Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         TerminalPaints(regular, bold, textSizePx)
     }
+    val selection by session.selection.collectAsState()
 
     var frame by remember { mutableLongStateOf(0L) }
     var cursorOn by remember { mutableStateOf(true) }
@@ -88,20 +98,84 @@ fun TerminalView(
         }
     }
 
+    fun cellOf(pos: Offset): TextSelection.Cell {
+        val col = (pos.x / paints.cellWidth).toInt().coerceIn(0, (session.term.cols - 1).coerceAtLeast(0))
+        val row = (pos.y / paints.cellHeight).toInt().coerceIn(0, (session.term.rows - 1).coerceAtLeast(0))
+        return TextSelection.Cell(row, col)
+    }
+
     Canvas(
-        modifier = modifier.onSizeChanged { pendingSize = it },
+        modifier = modifier
+            .onSizeChanged { pendingSize = it }
+            // Pinch to zoom the font; single-finger has zoom == 1 so this stays inert.
+            .pointerInput(paints) {
+                detectTransformGestures { _, _, zoom, _ ->
+                    if (zoom != 1f) onZoom(zoom)
+                }
+            }
+            // Tap: clear an active selection, else send a mouse click (mouse apps),
+            // else focus the input and raise the keyboard.
+            .pointerInput(session, paints) {
+                detectTapGestures(
+                    onLongPress = { pos -> session.selectWordAt(cellOf(pos)) },
+                    onTap = { pos ->
+                        when {
+                            session.selection.value != null -> session.clearSelection()
+                            session.mouseActive -> session.mouseClick(cellOf(pos))
+                            else -> onRequestFocus()
+                        }
+                    },
+                )
+            }
+            // Drag: extend a long-press selection, drive mouse motion in mouse apps,
+            // or rubber-band a fresh selection on a bare grid.
+            .pointerInput(session, paints) {
+                var mode = DragMode.NONE
+                var last = TextSelection.Cell(0, 0)
+                detectDragGestures(
+                    onDragStart = { pos ->
+                        val cell = cellOf(pos)
+                        last = cell
+                        mode = when {
+                            session.selection.value != null -> DragMode.SELECT // from long-press
+                            session.mouseActive -> DragMode.MOUSE.also { session.mouseDown(cell) }
+                            else -> DragMode.SELECT.also { session.startSelection(cell) }
+                        }
+                    },
+                    onDrag = { change, _ ->
+                        val cell = cellOf(change.position)
+                        last = cell
+                        when (mode) {
+                            DragMode.SELECT -> session.extendSelection(cell)
+                            DragMode.MOUSE -> session.mouseDrag(cell)
+                            DragMode.NONE -> {}
+                        }
+                    },
+                    onDragEnd = {
+                        if (mode == DragMode.MOUSE) session.mouseUp(last)
+                        mode = DragMode.NONE
+                    },
+                    onDragCancel = {
+                        if (mode == DragMode.MOUSE) session.mouseUp(last)
+                        mode = DragMode.NONE
+                    },
+                )
+            },
     ) {
         frame // subscribe: redraw whenever the emulator generation advances
+        selection // subscribe: redraw when the selection changes
         drawIntoCanvas { canvas ->
             synchronized(session.lock) {
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
-                    size.width, size.height, cursorOn,
+                    size.width, size.height, cursorOn, selection,
                 )
             }
         }
     }
 }
+
+private enum class DragMode { NONE, SELECT, MOUSE }
 
 /** The water's glow: the cursor is StyxTeal, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
@@ -127,6 +201,7 @@ private fun drawTerminal(
     width: Float,
     height: Float,
     cursorOn: Boolean,
+    selection: TerminalSession.Selection?,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -137,6 +212,11 @@ private fun drawTerminal(
     val cw = p.cellWidth
     val ch = p.cellHeight
     val sb = StringBuilder(term.cols)
+
+    // Selection tint under the glyphs: a translucent wash of the river's teal.
+    if (selection != null) {
+        drawSelection(canvas, p, term, selection, cw, ch)
+    }
 
     for (row in 0 until term.rows) {
         val line = term.screen.line(row)
@@ -220,6 +300,33 @@ private fun drawTerminal(
         }
         p.fill.alpha = 255
     }
+}
+
+/** Wash the selected cells teal, computing each row's span like the copy does. */
+private fun drawSelection(
+    canvas: android.graphics.Canvas,
+    p: TerminalPaints,
+    term: TerminalEmulator,
+    selection: TerminalSession.Selection,
+    cw: Float,
+    ch: Float,
+) {
+    val a = selection.anchor
+    val b = selection.focus
+    val (start, end) = if (a.row < b.row || (a.row == b.row && a.col <= b.col)) a to b else b to a
+    val firstRow = start.row.coerceIn(0, term.rows - 1)
+    val lastRow = end.row.coerceIn(0, term.rows - 1)
+    p.fill.color = CURSOR_TEAL
+    p.fill.alpha = 70
+    for (row in firstRow..lastRow) {
+        val from = if (row == firstRow) start.col.coerceIn(0, term.cols - 1) else 0
+        val to = if (row == lastRow) end.col.coerceIn(0, term.cols - 1) else term.cols - 1
+        val left = from * cw
+        val right = (to + 1) * cw
+        val top = row * ch
+        canvas.drawRect(left, top, right, top + ch, p.fill)
+    }
+    p.fill.alpha = 255
 }
 
 private fun resolveFg(attrs: Long, term: TerminalEmulator, defaultFg: Int, defaultBg: Int): Int {

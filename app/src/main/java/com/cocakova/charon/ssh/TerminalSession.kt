@@ -1,6 +1,9 @@
 package com.cocakova.charon.ssh
 
 import com.cocakova.charon.terminal.TerminalEmulator
+import com.cocakova.charon.terminal.TextSelection
+import com.cocakova.charon.terminal.input.KeyEncoder
+import com.cocakova.charon.terminal.input.MouseEncoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.UUID
 
@@ -58,6 +61,88 @@ class TerminalSession(
         onOutput?.invoke(text.toByteArray(Charsets.UTF_8))
     }
 
+    // ---- Selection (visible grid; scrollback selection is a later cut) -------------
+
+    data class Selection(val anchor: TextSelection.Cell, val focus: TextSelection.Cell)
+
+    /** Live selection for the renderer to tint and the copy affordance to read. */
+    val selection = MutableStateFlow<Selection?>(null)
+
+    /** True while the remote app is tracking the mouse (any DECSET 9/1000/1002/1003). */
+    val mouseActive: Boolean get() = synchronized(lock) { term.mouseMode != 0 }
+
+    fun selectWordAt(cell: TextSelection.Cell) {
+        selection.value = synchronized(lock) {
+            val row = cell.row.coerceIn(0, term.rows - 1)
+            val line = term.screen.line(row)
+            val range = TextSelection.wordAt(line, cell.col.coerceIn(0, term.cols - 1))
+            Selection(TextSelection.Cell(row, range.first), TextSelection.Cell(row, range.last))
+        }
+    }
+
+    fun startSelection(cell: TextSelection.Cell) {
+        selection.value = Selection(cell, cell)
+    }
+
+    fun extendSelection(focus: TextSelection.Cell) {
+        selection.value = selection.value?.copy(focus = focus)
+    }
+
+    fun clearSelection() {
+        selection.value = null
+    }
+
+    /** Copy the selection as plain text (wrapped lines joined), or null if none. */
+    fun copySelection(): String? {
+        val sel = selection.value ?: return null
+        return synchronized(lock) { TextSelection.extract(term.screen, sel.anchor, sel.focus) }
+    }
+
+    // ---- Paste & mouse reporting ---------------------------------------------------
+
+    /** Paste text to the remote, bracketed-guarded when the app asked for it. */
+    fun paste(text: String) {
+        if (text.isEmpty()) return
+        val wrapped = synchronized(lock) { KeyEncoder.paste(text, term.bracketedPaste) }
+        sendText(wrapped)
+    }
+
+    private fun emitMouse(
+        event: MouseEncoder.Event,
+        button: MouseEncoder.Button,
+        cell: TextSelection.Cell,
+        held: MouseEncoder.Button? = null,
+    ) {
+        val bytes = synchronized(lock) {
+            MouseEncoder.encode(
+                term.mouseMode, term.mouseSgr, event, button,
+                cell.col, cell.row, heldButton = held,
+            )
+        } ?: return
+        sendText(bytes)
+    }
+
+    fun mouseClick(cell: TextSelection.Cell) {
+        emitMouse(MouseEncoder.Event.PRESS, MouseEncoder.Button.LEFT, cell)
+        emitMouse(MouseEncoder.Event.RELEASE, MouseEncoder.Button.LEFT, cell)
+    }
+
+    fun mouseDown(cell: TextSelection.Cell) =
+        emitMouse(MouseEncoder.Event.PRESS, MouseEncoder.Button.LEFT, cell)
+
+    fun mouseDrag(cell: TextSelection.Cell) =
+        emitMouse(MouseEncoder.Event.MOVE, MouseEncoder.Button.LEFT, cell, held = MouseEncoder.Button.LEFT)
+
+    fun mouseUp(cell: TextSelection.Cell) =
+        emitMouse(MouseEncoder.Event.RELEASE, MouseEncoder.Button.LEFT, cell)
+
+    fun mouseWheel(up: Boolean, cell: TextSelection.Cell) =
+        emitMouse(
+            MouseEncoder.Event.PRESS,
+            if (up) MouseEncoder.Button.WHEEL_UP else MouseEncoder.Button.WHEEL_DOWN,
+            cell,
+        )
+
     /** Renderer-driven resize: grid first, then the PTY. */
     fun resize(cols: Int, rows: Int, cellWidthPx: Int, cellHeightPx: Int) {
         val changed = synchronized(lock) {
@@ -68,6 +153,7 @@ class TerminalSession(
             c
         }
         if (changed) {
+            clearSelection() // the old cells no longer mean anything at the new geometry
             dims.value = cols to rows
             onResize?.invoke(cols, rows)
         }
