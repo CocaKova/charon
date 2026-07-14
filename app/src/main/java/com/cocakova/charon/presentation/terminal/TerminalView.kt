@@ -15,10 +15,15 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
 import com.cocakova.charon.R
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.CellAttrs
@@ -69,12 +74,22 @@ fun TerminalView(
         }
     }
 
-    Canvas(
-        modifier = modifier.onSizeChanged { size ->
+    // Debounced grid resize: the IME animates the canvas per frame, and resizing the
+    // emulator + WINCHing the PTY 20 times per transition makes remote TUIs thrash.
+    // The grid re-snaps once, ~120ms after the size settles; while animating we just
+    // draw the old grid clipped.
+    var pendingSize by remember { mutableStateOf<IntSize?>(null) }
+    LaunchedEffect(session, paints) {
+        snapshotFlow { pendingSize }.filterNotNull().collectLatest { size ->
+            delay(120)
             val cols = (size.width / paints.cellWidth).toInt().coerceAtLeast(4)
             val rows = (size.height / paints.cellHeight).toInt().coerceAtLeast(2)
             session.resize(cols, rows, paints.cellWidth.toInt(), paints.cellHeight.toInt())
-        },
+        }
+    }
+
+    Canvas(
+        modifier = modifier.onSizeChanged { pendingSize = it },
     ) {
         frame // subscribe: redraw whenever the emulator generation advances
         drawIntoCanvas { canvas ->

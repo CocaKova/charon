@@ -17,6 +17,10 @@ class TerminalEmulator(
     private val onResponse: (String) -> Unit = {},
     private val onBell: () -> Unit = {},
     private val onTitle: (String) -> Unit = {},
+    /** Scheme hooks: themed ANSI-16 base (see [Palette]) and default fg/bg. */
+    basePalette: IntArray? = null,
+    private val initialFg: Int = 0xE6EDF3,
+    private val initialBg: Int = 0x000000,
 ) : ParserSink {
 
     var cols: Int = initialCols
@@ -71,9 +75,9 @@ class TerminalEmulator(
     private val savedAlt = SavedCursor()
     private val saved: SavedCursor get() = if (usingAlt) savedAlt else savedPrimary
 
-    val palette = Palette()
-    var defaultFg = 0xE6EDF3
-    var defaultBg = 0x000000
+    val palette = Palette(basePalette)
+    var defaultFg = initialFg
+    var defaultBg = initialBg
 
     /** Pixel cell size, set by the renderer; used for CSI 14t reports. */
     var cellWidthPx = 8
@@ -311,8 +315,8 @@ class TerminalEmulator(
             104 -> if (arg.isEmpty()) palette.reset() else arg.split(';').forEach {
                 it.toIntOrNull()?.let { i -> palette.resetEntry(i) }
             }
-            110 -> defaultFg = 0xE6EDF3
-            111 -> defaultBg = 0x000000
+            110 -> defaultFg = initialFg
+            111 -> defaultBg = initialBg
             else -> {} // OSC 52 clipboard lands in v0.4 behind consent
         }
         touch()

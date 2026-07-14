@@ -26,12 +26,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
+import com.cocakova.charon.theme.ObolGold
 import com.cocakova.charon.theme.StyxTeal
 
 /**
@@ -45,6 +47,8 @@ fun AccessoryRow(
     onToggleCtrl: () -> Unit,
     onKey: (KeyEncoder.Key) -> Unit,
     onText: (String) -> Unit,
+    rawInput: Boolean,
+    onToggleInputMode: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -70,6 +74,13 @@ fun AccessoryRow(
         AccessoryKey("pgdn") { onKey(KeyEncoder.Key.PAGE_DOWN) }
         AccessoryKey("home") { onKey(KeyEncoder.Key.HOME) }
         AccessoryKey("end") { onKey(KeyEncoder.Key.END) }
+        // Input-mode toggle: predictive (swipe/suggestions) vs raw key events.
+        // Gold when raw — you've stepped off the charted water.
+        AccessoryKey(
+            if (rawInput) "raw" else "abc",
+            highlighted = rawInput,
+            highlightColor = ObolGold,
+        ) { onToggleInputMode() }
     }
 }
 
@@ -77,6 +88,7 @@ fun AccessoryRow(
 private fun AccessoryKey(
     label: String,
     highlighted: Boolean = false,
+    highlightColor: Color = StyxTeal,
     onPress: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -88,7 +100,7 @@ private fun AccessoryKey(
         label = "keyScale",
     )
     val container by animateColorAsState(
-        targetValue = if (highlighted) StyxTeal else MaterialTheme.colorScheme.surfaceVariant,
+        targetValue = if (highlighted) highlightColor else MaterialTheme.colorScheme.surfaceVariant,
         animationSpec = tween(160),
         label = "keyColor",
     )
