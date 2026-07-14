@@ -168,6 +168,18 @@ fun TerminalScreen(
         onDispose { inputView?.hideKeyboard() }
     }
 
+    // Keep the screen lit at sea (opt-in from the helm): a terminal you're watching
+    // shouldn't doze mid-tail. The flag lifts the moment the terminal leaves.
+    val activityWindow = (LocalContext.current as? android.app.Activity)?.window
+    DisposableEffect(activityWindow) {
+        if (prefs.getBoolean("keep_screen_on", false)) {
+            activityWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            activityWindow?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     // Smart autofill: history + command grammar + live host context (installed
     // commands, running tmux sessions…). ctxVersion ticks when a probe lands, so
     // suggestions refresh the moment the host answers.
@@ -182,9 +194,17 @@ fun TerminalScreen(
     // Charted channels sheet, raised from the switcher's ⇆.
     var showForwards by remember { mutableStateOf(false) }
 
+    // Stepping off the terminal must drop the keyboard NOW, while the input view is
+    // still attached — the onDispose fallback fires after the crossfade detaches it,
+    // when its window token is already dead and the hide is a silent no-op.
+    fun leaveTerminal(to: () -> Unit) {
+        inputView?.hideKeyboard()
+        to()
+    }
+
     // The system back gesture steps ashore (the Dock) instead of killing the app;
     // every crossing stays live in the background. The ⌂ in the switcher matches.
-    BackHandler { onDock() }
+    BackHandler { leaveTerminal(onDock) }
 
     // Cycle a modifier: tap toggles off<->armed (a lock is cleared by a tap too).
     fun tapMod(s: Sticky) = if (s == Sticky.OFF) Sticky.ARMED else Sticky.OFF
@@ -202,9 +222,9 @@ fun TerminalScreen(
             activeId = session.id,
             onSwitch = onSwitch,
             onClose = onClose,
-            onNewSession = onNewSession,
-            onDock = onDock,
-            onFiles = onFiles,
+            onNewSession = { leaveTerminal(onNewSession) },
+            onDock = { leaveTerminal(onDock) },
+            onFiles = { leaveTerminal(onFiles) },
             onForwards = { showForwards = true },
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -238,9 +258,43 @@ fun TerminalScreen(
                     inputView?.showKeyboard()
                 },
                 onZoom = { zoom ->
-                    fontSizeSp = (fontSizeSp * zoom).coerceIn(8f, 32f)
+                    // Floor 6sp: tiny, but it's what fits 80 columns in portrait —
+                    // full-screen TUIs (btop, htop) refuse to draw below 80×24.
+                    fontSizeSp = (fontSizeSp * zoom).coerceIn(6f, 32f)
                 },
             )
+
+            // Grid-size readout: flashes cols × rows whenever the grid re-snaps
+            // (pinch-zoom, keyboard up/down). Teal when full-screen TUIs fit; ember
+            // below 80×24 — the honest answer to btop's "terminal size too small".
+            val dims by session.dims.collectAsState()
+            var dimsShown by remember(session.id) { mutableStateOf(false) }
+            var dimsSeen by remember(session.id) { mutableStateOf(false) }
+            LaunchedEffect(dims) {
+                // The first snap is just the terminal finding its size — stay quiet.
+                if (!dimsSeen) {
+                    dimsSeen = true
+                    return@LaunchedEffect
+                }
+                dimsShown = true
+                delay(1400)
+                dimsShown = false
+            }
+            if (dimsShown) {
+                val (c, r) = dims
+                Text(
+                    "$c × $r",
+                    fontFamily = CharonMono,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (c < 80 || r < 24) WarnEmber else StyxTeal)
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
 
             // Scrolled-back indicator: a pill anchored to the live edge. Tap to
             // return to the bottom (typing does the same).

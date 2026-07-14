@@ -26,8 +26,8 @@ android {
         applicationId = "com.cocakova.charon"
         minSdk = 24
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.7.1"
+        versionCode = 15
+        versionName = "0.7.2"
     }
 
     signingConfigs {
