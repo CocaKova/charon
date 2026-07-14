@@ -51,10 +51,38 @@ class TerminalSession(
         initialBg = initialBg,
     )
 
+    /** Rows scrolled back from the live bottom; 0 = following output. */
+    val scrollOffset = MutableStateFlow(0)
+
     fun feedRemote(bytes: ByteArray, offset: Int, length: Int) {
         synchronized(lock) {
+            val before = term.screen.scrollbackSize
             term.write(bytes, offset, length)
+            // While the user is scrolled up, grow the offset by however many lines
+            // were just evicted into scrollback so the viewport stays put instead of
+            // drifting under new output.
+            if (scrollOffset.value > 0) {
+                val grew = term.screen.scrollbackSize - before
+                if (grew > 0) {
+                    scrollOffset.value =
+                        (scrollOffset.value + grew).coerceAtMost(term.screen.scrollbackSize)
+                }
+            }
         }
+    }
+
+    /** Scroll the viewport by [deltaRows] (positive = toward older history). */
+    fun scrollBy(deltaRows: Int) {
+        val max = synchronized(lock) { term.screen.scrollbackSize }
+        val next = (scrollOffset.value + deltaRows).coerceIn(0, max)
+        if (next != scrollOffset.value) {
+            scrollOffset.value = next
+            clearSelection() // selection cells were pinned to the old viewport
+        }
+    }
+
+    fun scrollToBottom() {
+        if (scrollOffset.value != 0) scrollOffset.value = 0
     }
 
     fun sendText(text: String) {
@@ -74,7 +102,7 @@ class TerminalSession(
     fun selectWordAt(cell: TextSelection.Cell) {
         selection.value = synchronized(lock) {
             val row = cell.row.coerceIn(0, term.rows - 1)
-            val line = term.screen.line(row)
+            val line = term.screen.viewLine(scrollOffset.value, row)
             val range = TextSelection.wordAt(line, cell.col.coerceIn(0, term.cols - 1))
             Selection(TextSelection.Cell(row, range.first), TextSelection.Cell(row, range.last))
         }
@@ -95,7 +123,9 @@ class TerminalSession(
     /** Copy the selection as plain text (wrapped lines joined), or null if none. */
     fun copySelection(): String? {
         val sel = selection.value ?: return null
-        return synchronized(lock) { TextSelection.extract(term.screen, sel.anchor, sel.focus) }
+        return synchronized(lock) {
+            TextSelection.extract(term.screen, sel.anchor, sel.focus, scrollOffset.value)
+        }
     }
 
     // ---- Paste & mouse reporting ---------------------------------------------------
@@ -154,6 +184,7 @@ class TerminalSession(
         }
         if (changed) {
             clearSelection() // the old cells no longer mean anything at the new geometry
+            scrollToBottom()
             dims.value = cols to rows
             onResize?.invoke(cols, rows)
         }

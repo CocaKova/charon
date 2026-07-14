@@ -64,6 +64,18 @@ class TextSelectionTest {
     }
 
     @Test
+    fun `selection reads scrollback when scrolled up`() {
+        // 2-row grid: writing four lines pushes the first two into scrollback.
+        val term = TerminalEmulator(10, 2)
+        term.write("line1\r\nline2\r\nline3\r\nline4".toByteArray())
+        // Live view shows line3/line4; scroll up 2 to reach line1/line2.
+        val out = TextSelection.extract(
+            term.screen, TextSelection.Cell(0, 0), TextSelection.Cell(1, 9), scrollOffset = 2,
+        )
+        assertEquals("line1\nline2", out)
+    }
+
+    @Test
     fun `wordAt selects an identifier-ish run and paths stay whole`() {
         val s = screenOf(40, "cat /etc/hosts now")
         val line = s.line(0)

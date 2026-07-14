@@ -14,20 +14,20 @@ object TextSelection {
 
     data class Cell(val row: Int, val col: Int)
 
-    fun extract(screen: ScreenBuffer, a: Cell, b: Cell): String {
+    fun extract(screen: ScreenBuffer, a: Cell, b: Cell, scrollOffset: Int = 0): String {
         val (start, end) = order(a, b)
         val firstRow = start.row.coerceIn(0, screen.rows - 1)
         val lastRow = end.row.coerceIn(0, screen.rows - 1)
 
         return buildString {
             for (row in firstRow..lastRow) {
-                val line = screen.line(row)
+                val line = screen.viewLine(scrollOffset, row)
                 val from = if (row == firstRow) start.col.coerceIn(0, screen.cols - 1) else 0
                 val to = if (row == lastRow) end.col.coerceIn(0, screen.cols - 1) else screen.cols - 1
                 append(rowText(line, from, to))
                 if (row != lastRow) {
                     // A newline only where the next row is NOT a soft-wrap continuation.
-                    if (!screen.line(row + 1).isWrapped) append('\n')
+                    if (!screen.viewLine(scrollOffset, row + 1).isWrapped) append('\n')
                 }
             }
         }

@@ -62,6 +62,7 @@ fun TerminalView(
         TerminalPaints(regular, bold, textSizePx)
     }
     val selection by session.selection.collectAsState()
+    val scrollOffset by session.scrollOffset.collectAsState()
 
     var frame by remember { mutableLongStateOf(0L) }
     var cursorOn by remember { mutableStateOf(true) }
@@ -127,55 +128,67 @@ fun TerminalView(
                     },
                 )
             }
-            // Drag: extend a long-press selection, drive mouse motion in mouse apps,
-            // or rubber-band a fresh selection on a bare grid.
+            // Drag: extend a long-press selection; in a mouse app send wheel notches;
+            // otherwise scroll our own scrollback. One notch per cell-height dragged.
             .pointerInput(session, paints) {
                 var mode = DragMode.NONE
-                var last = TextSelection.Cell(0, 0)
+                var startCell = TextSelection.Cell(0, 0)
+                var accum = 0f
                 detectDragGestures(
                     onDragStart = { pos ->
-                        val cell = cellOf(pos)
-                        last = cell
+                        startCell = cellOf(pos)
+                        accum = 0f
                         mode = when {
                             session.selection.value != null -> DragMode.SELECT // from long-press
-                            session.mouseActive -> DragMode.MOUSE.also { session.mouseDown(cell) }
-                            else -> DragMode.SELECT.also { session.startSelection(cell) }
+                            session.mouseActive -> DragMode.WHEEL
+                            else -> DragMode.SCROLL
                         }
                     },
-                    onDrag = { change, _ ->
-                        val cell = cellOf(change.position)
-                        last = cell
+                    onDrag = { change, drag ->
                         when (mode) {
-                            DragMode.SELECT -> session.extendSelection(cell)
-                            DragMode.MOUSE -> session.mouseDrag(cell)
+                            DragMode.SELECT -> session.extendSelection(cellOf(change.position))
+                            DragMode.WHEEL -> {
+                                accum += drag.y
+                                while (accum >= paints.cellHeight) {
+                                    session.mouseWheel(up = true, startCell); accum -= paints.cellHeight
+                                }
+                                while (accum <= -paints.cellHeight) {
+                                    session.mouseWheel(up = false, startCell); accum += paints.cellHeight
+                                }
+                            }
+                            DragMode.SCROLL -> {
+                                // Drag down reveals older lines (offset grows); drag up returns.
+                                accum += drag.y
+                                while (accum >= paints.cellHeight) {
+                                    session.scrollBy(1); accum -= paints.cellHeight
+                                }
+                                while (accum <= -paints.cellHeight) {
+                                    session.scrollBy(-1); accum += paints.cellHeight
+                                }
+                            }
                             DragMode.NONE -> {}
                         }
                     },
-                    onDragEnd = {
-                        if (mode == DragMode.MOUSE) session.mouseUp(last)
-                        mode = DragMode.NONE
-                    },
-                    onDragCancel = {
-                        if (mode == DragMode.MOUSE) session.mouseUp(last)
-                        mode = DragMode.NONE
-                    },
+                    onDragEnd = { mode = DragMode.NONE },
+                    onDragCancel = { mode = DragMode.NONE },
                 )
             },
     ) {
         frame // subscribe: redraw whenever the emulator generation advances
         selection // subscribe: redraw when the selection changes
+        scrollOffset // subscribe: redraw when the viewport scrolls
         drawIntoCanvas { canvas ->
             synchronized(session.lock) {
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
-                    size.width, size.height, cursorOn, selection,
+                    size.width, size.height, cursorOn, selection, scrollOffset,
                 )
             }
         }
     }
 }
 
-private enum class DragMode { NONE, SELECT, MOUSE }
+private enum class DragMode { NONE, SELECT, WHEEL, SCROLL }
 
 /** The water's glow: the cursor is StyxTeal, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
@@ -202,6 +215,7 @@ private fun drawTerminal(
     height: Float,
     cursorOn: Boolean,
     selection: TerminalSession.Selection?,
+    scrollOffset: Int,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -219,7 +233,7 @@ private fun drawTerminal(
     }
 
     for (row in 0 until term.rows) {
-        val line = term.screen.line(row)
+        val line = term.screen.viewLine(scrollOffset, row)
         val top = row * ch
         val baseline = top + p.baselineOffset
         var col = 0
@@ -280,7 +294,8 @@ private fun drawTerminal(
 
     // Cursor: teal block over text (translucent, the glyph stays readable); the
     // blink's off-phase leaves a hairline outline so the cursor never vanishes.
-    if (term.cursorVisible) {
+    // Hidden while scrolled back — it isn't where you're looking.
+    if (term.cursorVisible && scrollOffset == 0) {
         val wideCursor = CellAttrs.hasStyle(
             term.screen.line(term.cursorY).attrs[term.cursorX], CellAttrs.WIDE,
         )

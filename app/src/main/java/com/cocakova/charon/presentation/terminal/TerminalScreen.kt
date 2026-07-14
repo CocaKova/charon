@@ -63,6 +63,7 @@ fun TerminalScreen(
 ) {
     val state by session.state.collectAsState()
     val selection by session.selection.collectAsState()
+    val scrollOffset by session.scrollOffset.collectAsState()
     val clipboard = LocalClipboardManager.current
     var ctrlArmed by remember { mutableStateOf(false) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
@@ -85,7 +86,9 @@ fun TerminalScreen(
     }
 
     // Sticky one-shot Ctrl applies to whatever text comes next (IME or accessory).
+    // Any keystroke also snaps the viewport back to the live bottom.
     fun sendText(text: String) {
+        session.scrollToBottom()
         if (ctrlArmed && text.length == 1) {
             ctrlArmed = false
             KeyEncoder.ctrl(text[0])?.let { session.sendText(it) } ?: session.sendText(text)
@@ -128,6 +131,23 @@ fun TerminalScreen(
                     fontSizeSp = (fontSizeSp * zoom).coerceIn(8f, 32f)
                 },
             )
+
+            // Scrolled-back indicator: a pill anchored to the live edge. Tap to
+            // return to the bottom (typing does the same).
+            if (scrollOffset > 0) {
+                Text(
+                    "▼ live",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(ObolGold)
+                        .clickable { session.scrollToBottom() }
+                        .padding(horizontal = 18.dp, vertical = 7.dp),
+                )
+            }
 
             // Copy affordance: a teal pill that surfaces while a selection holds.
             if (selection != null) {
@@ -176,10 +196,14 @@ fun TerminalScreen(
             ctrlArmed = ctrlArmed,
             onToggleCtrl = { ctrlArmed = !ctrlArmed },
             onKey = { key ->
+                session.scrollToBottom()
                 session.sendText(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp))
             },
             onText = { sendText(it) },
-            onPaste = { clipboard.getText()?.text?.let { session.paste(it) } },
+            onPaste = {
+                session.scrollToBottom()
+                clipboard.getText()?.text?.let { session.paste(it) }
+            },
             rawInput = inputMode == TerminalInputView.Mode.RAW,
             onToggleInputMode = {
                 inputMode = if (inputMode == TerminalInputView.Mode.RAW) {
