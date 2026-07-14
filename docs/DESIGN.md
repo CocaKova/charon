@@ -59,8 +59,14 @@ wears **one thin band of instrument panel** and otherwise gets out of the way:
   crossing, WarnEmber = lost) + `user@host` + live `cols×rows`. It later becomes the
   session switcher (v0.5) — the chrome earns its pixels before it multiplies.
 - **Accessory row** is part of the instrument: JetBrains Mono labels, DepthSlate key
-  pills on AbyssInk, press = quick sink-and-spring scale + teal ripple; the sticky Ctrl
-  latch fills teal when armed. Long-press variants / mod-lock / F-key page land in v0.4.
+  pills on AbyssInk, press = quick sink-and-spring scale + teal ripple. Sticky Ctrl/Alt
+  read the theme — **teal = armed** (charged one-shot), **obol-gold = locked**;
+  long-press latches. Long-press variants (tab→back-tab, symbols→shifted mates),
+  auto-repeat arrows, and a gold **Fn** page (F1–F12) all ship in v0.4. Full model in
+  `docs/INPUT.md`.
+- **Touch is expressive, in theme**: selection washes StyxTeal with a teal **copy**
+  pill; scrolled-back history shows a gold **▼ live** pill (the mouse-app wheel and the
+  scrollback share one drag). Gesture/selection/mouse model: `docs/INPUT.md`.
 - **Cursor** is the one always-on brand mark inside the grid: a StyxTeal block with a
   soft 530 ms blink; the off-phase keeps a hairline teal outline (never vanishes), and
   output holds it solid.

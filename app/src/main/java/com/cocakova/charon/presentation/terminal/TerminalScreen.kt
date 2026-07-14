@@ -65,7 +65,8 @@ fun TerminalScreen(
     val selection by session.selection.collectAsState()
     val scrollOffset by session.scrollOffset.collectAsState()
     val clipboard = LocalClipboardManager.current
-    var ctrlArmed by remember { mutableStateOf(false) }
+    var ctrl by remember { mutableStateOf(Sticky.OFF) }
+    var alt by remember { mutableStateOf(Sticky.OFF) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
     val inputFocus = remember { FocusRequester() }
     val prefs = LocalContext.current.getSharedPreferences("charon", Context.MODE_PRIVATE)
@@ -85,17 +86,23 @@ fun TerminalScreen(
             .apply()
     }
 
-    // Sticky one-shot Ctrl applies to whatever text comes next (IME or accessory).
-    // Any keystroke also snaps the viewport back to the live bottom.
-    fun sendText(text: String) {
+    // Apply the sticky modifiers to whatever's about to go out: Ctrl folds a single
+    // char to its control code, Alt (Meta) prefixes ESC. Armed modifiers fire once
+    // then clear; locked ones persist. Any keystroke snaps the view to the bottom.
+    fun emit(raw: String, singleChar: Boolean) {
         session.scrollToBottom()
-        if (ctrlArmed && text.length == 1) {
-            ctrlArmed = false
-            KeyEncoder.ctrl(text[0])?.let { session.sendText(it) } ?: session.sendText(text)
-        } else {
-            session.sendText(text)
-        }
+        var out = raw
+        if (singleChar && ctrl != Sticky.OFF) out = KeyEncoder.ctrl(raw[0]) ?: raw
+        if (alt != Sticky.OFF) out = KeyEncoder.alt(out)
+        session.sendText(out)
+        if (ctrl == Sticky.ARMED) ctrl = Sticky.OFF
+        if (alt == Sticky.ARMED) alt = Sticky.OFF
     }
+
+    // Cycle a modifier: tap toggles off<->armed (a lock is cleared by a tap too).
+    fun tapMod(s: Sticky) = if (s == Sticky.OFF) Sticky.ARMED else Sticky.OFF
+    // Long-press latches or releases the lock.
+    fun lockMod(s: Sticky) = if (s == Sticky.LOCKED) Sticky.OFF else Sticky.LOCKED
 
     Column(
         modifier = modifier
@@ -112,7 +119,7 @@ fun TerminalScreen(
             AndroidView(
                 factory = { ctx ->
                     TerminalInputView(ctx).apply {
-                        onInput = { sendText(it) }
+                        onInput = { emit(it, it.length == 1) }
                         appCursorKeys = { session.term.cursorKeysApp }
                         mode = inputMode
                     }.also { inputView = it }
@@ -193,13 +200,17 @@ fun TerminalScreen(
             }
         }
         AccessoryRow(
-            ctrlArmed = ctrlArmed,
-            onToggleCtrl = { ctrlArmed = !ctrlArmed },
+            ctrl = ctrl,
+            onCtrl = { ctrl = tapMod(ctrl) },
+            onCtrlLock = { ctrl = lockMod(ctrl) },
+            alt = alt,
+            onAlt = { alt = tapMod(alt) },
+            onAltLock = { alt = lockMod(alt) },
             onKey = { key ->
-                session.scrollToBottom()
-                session.sendText(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp))
+                // Special keys carry Alt (ESC prefix) but not Ctrl; encode then emit.
+                emit(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp), singleChar = false)
             },
-            onText = { sendText(it) },
+            onText = { emit(it, it.length == 1) },
             onPaste = {
                 session.scrollToBottom()
                 clipboard.getText()?.text?.let { session.paste(it) }

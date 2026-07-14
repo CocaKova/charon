@@ -24,6 +24,12 @@ class KeyEncoderTest {
     }
 
     @Test
+    fun tabAndBackTab() {
+        assertEquals("\t", KeyEncoder.encode(KeyEncoder.Key.TAB))
+        assertEquals("$E[Z", KeyEncoder.encode(KeyEncoder.Key.BACK_TAB))
+    }
+
+    @Test
     fun backspaceDefaultsToDel() {
         assertEquals("\u007F", KeyEncoder.encode(KeyEncoder.Key.BACKSPACE))
         assertEquals("\u0008", KeyEncoder.encode(KeyEncoder.Key.BACKSPACE, backspaceSendsDel = false))

@@ -34,10 +34,19 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
 
 ## v0.4 additions
 
-- [ ] Mouse reporting: modes 9/1000/1002/1003, SGR 1006 encoding (1015 fallback, skip 1005)
-- [ ] Bracketed paste (2004), focus events (1004)
+- [x] Mouse **mode tracking** parsed: 9/1000/1002/1003, SGR 1006, focus 1004, bracketed 2004
+- [x] Mouse **encoding**: `input/MouseEncoder` — SGR 1006 + legacy X10/normal, mode-gated,
+  wheel 64/65 (skip 1005; 1015 not needed). Touch→mouse wiring in the app layer.
+- [x] Bracketed paste (2004) honored on paste via `KeyEncoder.paste`
+- [x] Selection + copy (`TextSelection`, scroll-aware) and scrollback + wheel-scroll
+  (`ScreenBuffer.viewLine`) — see `docs/INPUT.md`
+- [x] Back-tab (CBT `ESC[Z`) in `KeyEncoder`
 - [ ] OSC 0/1/2 title; OSC 52 clipboard (behind per-host consent); OSC 4/104 palette
 - [ ] DECRQSS (minimal), XTVERSION
+- [ ] Hardware keyboard (Ctrl/Alt combos, Ctrl+Shift+C/V)
+
+The **input/interaction** surface (accessory row, gestures, selection, mouse, IME) is
+documented end-to-end in `docs/INPUT.md`.
 
 ## Explicit non-goals (until someone asks)
 
@@ -62,3 +71,6 @@ lay out against).
 - 2026-07-13 — v0 checklist implemented; 98 JVM tests green; corpus goldens locked
   (vim syntax screen, htop meters, tmux split, ls --color, truecolor gradient);
   parse throughput 91.7 MB/s on the Spark (floor: 50).
+- 2026-07-13 — v0.4 input slice: MouseEncoder + TextSelection + scrollback viewport
+  landed with unit tests; verified on-device against the Spark (htop mouse click +
+  wheel, select/copy/bracketed-paste, scrollback, sticky Ctrl-C, Fn page).

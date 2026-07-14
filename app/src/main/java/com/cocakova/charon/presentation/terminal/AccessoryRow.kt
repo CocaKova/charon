@@ -6,45 +6,67 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
+import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
 import com.cocakova.charon.theme.StyxTeal
 
+/** Sticky modifier state: off, armed for one keystroke, or latched on. */
+enum class Sticky { OFF, ARMED, LOCKED }
+
 /**
- * The key row terminals on phones live or die by. v0.1 ships the essentials with a
- * sticky Ctrl (tap = one-shot); long-press variants, mod-lock, and the F-key page
- * arrive in the terminal-excellence milestone (v0.4).
+ * The key row terminals on phones live or die by — Charon's flagship. Beyond the
+ * essentials: **sticky modifiers** (tap Ctrl/Alt to arm for one keystroke, long-
+ * press to latch — teal = armed, obol-gold = locked), **long-press variants** on
+ * keys (tab → back-tab, symbols → their shifted mates), **auto-repeat** arrows
+ * (hold to repeat), and an **Fn page** (F1–F12) you toggle into. The row scrolls
+ * horizontally; the theme carries through — JetBrains Mono, sink-and-spring press,
+ * teal ripple. See docs/INPUT.md.
  */
 @Composable
 fun AccessoryRow(
-    ctrlArmed: Boolean,
-    onToggleCtrl: () -> Unit,
+    ctrl: Sticky,
+    onCtrl: () -> Unit,
+    onCtrlLock: () -> Unit,
+    alt: Sticky,
+    onAlt: () -> Unit,
+    onAltLock: () -> Unit,
     onKey: (KeyEncoder.Key) -> Unit,
     onText: (String) -> Unit,
     onPaste: () -> Unit,
@@ -52,6 +74,8 @@ fun AccessoryRow(
     onToggleInputMode: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var fnPage by remember { mutableStateOf(false) }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -61,21 +85,41 @@ fun AccessoryRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AccessoryKey("esc") { onKey(KeyEncoder.Key.ESCAPE) }
-        AccessoryKey("tab") { onKey(KeyEncoder.Key.TAB) }
-        AccessoryKey("ctrl", highlighted = ctrlArmed) { onToggleCtrl() }
-        AccessoryKey("↑") { onKey(KeyEncoder.Key.UP) }
-        AccessoryKey("↓") { onKey(KeyEncoder.Key.DOWN) }
-        AccessoryKey("←") { onKey(KeyEncoder.Key.LEFT) }
-        AccessoryKey("→") { onKey(KeyEncoder.Key.RIGHT) }
-        AccessoryKey("-") { onText("-") }
-        AccessoryKey("/") { onText("/") }
-        AccessoryKey("|") { onText("|") }
-        AccessoryKey("~") { onText("~") }
+        // tab; long-press = back-tab (shift-tab).
+        AccessoryKey("tab", onLongPress = { onKey(KeyEncoder.Key.BACK_TAB) }) {
+            onKey(KeyEncoder.Key.TAB)
+        }
+        StickyKey("ctrl", ctrl, onTap = onCtrl, onLock = onCtrlLock)
+        StickyKey("alt", alt, onTap = onAlt, onLock = onAltLock)
+
+        Divider()
+
+        if (!fnPage) {
+            // Arrows auto-repeat on hold; that reads more naturally than a variant.
+            AccessoryKey("↑", repeatable = true) { onKey(KeyEncoder.Key.UP) }
+            AccessoryKey("↓", repeatable = true) { onKey(KeyEncoder.Key.DOWN) }
+            AccessoryKey("←", repeatable = true) { onKey(KeyEncoder.Key.LEFT) }
+            AccessoryKey("→", repeatable = true) { onKey(KeyEncoder.Key.RIGHT) }
+            // Symbols; long-press = the shifted mate the soft keyboard buries.
+            AccessoryKey("-", onLongPress = { onText("_") }) { onText("-") }
+            AccessoryKey("/", onLongPress = { onText("\\") }) { onText("/") }
+            AccessoryKey("|", onLongPress = { onText("`") }) { onText("|") }
+            AccessoryKey("~", onLongPress = { onText("^") }) { onText("~") }
+            AccessoryKey("home") { onKey(KeyEncoder.Key.HOME) }
+            AccessoryKey("end") { onKey(KeyEncoder.Key.END) }
+            AccessoryKey("pgup", repeatable = true) { onKey(KeyEncoder.Key.PAGE_UP) }
+            AccessoryKey("pgdn", repeatable = true) { onKey(KeyEncoder.Key.PAGE_DOWN) }
+        } else {
+            for ((label, key) in FUNCTION_KEYS) AccessoryKey(label) { onKey(key) }
+        }
+
+        Divider()
+
         AccessoryKey("paste") { onPaste() }
-        AccessoryKey("pgup") { onKey(KeyEncoder.Key.PAGE_UP) }
-        AccessoryKey("pgdn") { onKey(KeyEncoder.Key.PAGE_DOWN) }
-        AccessoryKey("home") { onKey(KeyEncoder.Key.HOME) }
-        AccessoryKey("end") { onKey(KeyEncoder.Key.END) }
+        // Fn: swaps the middle of the row to the F-key page. Gold while on it.
+        AccessoryKey("fn", highlighted = fnPage, highlightColor = ObolGold) {
+            fnPage = !fnPage
+        }
         // Input-mode toggle: predictive (swipe/suggestions) vs raw key events.
         // Gold when raw — you've stepped off the charted water.
         AccessoryKey(
@@ -86,21 +130,64 @@ fun AccessoryRow(
     }
 }
 
+private val FUNCTION_KEYS = listOf(
+    "F1" to KeyEncoder.Key.F1, "F2" to KeyEncoder.Key.F2, "F3" to KeyEncoder.Key.F3,
+    "F4" to KeyEncoder.Key.F4, "F5" to KeyEncoder.Key.F5, "F6" to KeyEncoder.Key.F6,
+    "F7" to KeyEncoder.Key.F7, "F8" to KeyEncoder.Key.F8, "F9" to KeyEncoder.Key.F9,
+    "F10" to KeyEncoder.Key.F10, "F11" to KeyEncoder.Key.F11, "F12" to KeyEncoder.Key.F12,
+)
+
+@Composable
+private fun Divider() {
+    Spacer(
+        Modifier
+            .padding(horizontal = 5.dp)
+            .width(1.dp)
+            .height(22.dp)
+            .background(MistGrey.copy(alpha = 0.25f)),
+    )
+}
+
+/**
+ * A modifier key with three states. Tap cycles arm/off; long-press latches or
+ * releases the lock. Teal = armed (charged, one shot), obol-gold = locked.
+ */
+@Composable
+private fun StickyKey(
+    label: String,
+    state: Sticky,
+    onTap: () -> Unit,
+    onLock: () -> Unit,
+) {
+    KeyPill(
+        label = label,
+        container = when (state) {
+            Sticky.OFF -> MaterialTheme.colorScheme.surfaceVariant
+            Sticky.ARMED -> StyxTeal
+            Sticky.LOCKED -> ObolGold
+        },
+        content = if (state == Sticky.OFF) MaterialTheme.colorScheme.onSurface
+        else MaterialTheme.colorScheme.onPrimary,
+        bold = state != Sticky.OFF,
+        modifier = Modifier.combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = ripple(color = StyxTeal),
+            onClick = onTap,
+            onLongClick = onLock,
+        ),
+    )
+}
+
 @Composable
 private fun AccessoryKey(
     label: String,
     highlighted: Boolean = false,
     highlightColor: Color = StyxTeal,
+    repeatable: Boolean = false,
+    onLongPress: (() -> Unit)? = null,
     onPress: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    // A quick sink-and-spring — the key feels mechanical, not painted.
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.88f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "keyScale",
-    )
     val container by animateColorAsState(
         targetValue = if (highlighted) highlightColor else MaterialTheme.colorScheme.surfaceVariant,
         animationSpec = tween(160),
@@ -113,6 +200,69 @@ private fun AccessoryKey(
         label = "keyContent",
     )
 
+    // Repeatable keys drive the action from a LaunchedEffect keyed on a pressed flag
+    // the gesture toggles — waitForUpOrCancellation lives in a restricted suspend
+    // scope and can't be wrapped in withTimeout, so the timing lives outside it.
+    var held by remember { mutableStateOf(false) }
+    if (repeatable) {
+        LaunchedEffect(held) {
+            if (held) {
+                onPress()
+                delay(400)
+                while (true) {
+                    onPress()
+                    delay(60)
+                }
+            }
+        }
+    }
+
+    val press = Modifier.when_(repeatable) {
+        pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                held = true
+                waitForUpOrCancellation()
+                held = false
+            }
+        }
+    }.when_(!repeatable) {
+        combinedClickable(
+            interactionSource = interaction,
+            indication = ripple(color = StyxTeal),
+            onClick = onPress,
+            onLongClick = onLongPress,
+        )
+    }
+
+    KeyPill(
+        label = label,
+        container = container,
+        content = content,
+        bold = highlighted,
+        interaction = interaction,
+        forcePressed = held,
+        modifier = press,
+    )
+}
+
+/** Shared pill visual: sink-and-spring scale on press, JetBrains Mono label. */
+@Composable
+private fun KeyPill(
+    label: String,
+    container: Color,
+    content: Color,
+    bold: Boolean,
+    modifier: Modifier = Modifier,
+    interaction: MutableInteractionSource = remember { MutableInteractionSource() },
+    forcePressed: Boolean = false,
+) {
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed || forcePressed) 0.88f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "keyScale",
+    )
     Box(
         modifier = Modifier
             .padding(horizontal = 3.dp)
@@ -120,20 +270,20 @@ private fun AccessoryKey(
             .height(36.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(container)
-            .clickable(
-                interactionSource = interaction,
-                indication = ripple(color = StyxTeal),
-                onClick = onPress,
-            ),
+            .then(modifier),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             fontFamily = CharonMono,
             fontSize = 13.sp,
-            fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
             color = content,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         )
     }
 }
+
+/** Apply [block] to the modifier only when [cond]; keeps the builder readable. */
+private inline fun Modifier.when_(cond: Boolean, block: Modifier.() -> Modifier): Modifier =
+    if (cond) block() else this
