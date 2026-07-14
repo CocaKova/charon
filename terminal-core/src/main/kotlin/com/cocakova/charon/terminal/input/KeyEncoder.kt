@@ -12,7 +12,7 @@ object KeyEncoder {
         UP, DOWN, RIGHT, LEFT,
         HOME, END, INSERT, DELETE, PAGE_UP, PAGE_DOWN,
         F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-        ENTER, TAB, BACKSPACE, ESCAPE,
+        ENTER, TAB, BACK_TAB, BACKSPACE, ESCAPE,
     }
 
     /**
@@ -44,6 +44,7 @@ object KeyEncoder {
         Key.F12 -> "$ESC[24~"
         Key.ENTER -> "\r"
         Key.TAB -> "\t"
+        Key.BACK_TAB -> "$ESC[Z"   // CBT shift-tab
         Key.BACKSPACE -> if (backspaceSendsDel) "\u007F" else "\u0008"
         Key.ESCAPE -> ESC
     }
