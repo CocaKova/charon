@@ -34,7 +34,14 @@ class TerminalSession(
     sealed class State {
         data object Connecting : State()
         data object Connected : State()
-        data class Disconnected(val reason: String) : State()
+        /** Down after a transport drop, redialing. [attempt] counts from 1. */
+        data class Reconnecting(val attempt: Int) : State()
+        /**
+         * Down for good (until a manual re-cross). [clean] = the remote closed the
+         * channel normally (you typed `exit`, or the server hung up) rather than the
+         * transport dying — a clean end is never auto-reconnected.
+         */
+        data class Disconnected(val reason: String, val clean: Boolean = false) : State()
     }
 
     val state = MutableStateFlow<State>(State.Connecting)

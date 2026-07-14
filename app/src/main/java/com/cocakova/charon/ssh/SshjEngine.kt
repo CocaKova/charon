@@ -110,10 +110,15 @@ class SshjEngine : SshEngine {
                 outbound.put(ChannelOp.Write((cmd + "\n").toByteArray(Charsets.UTF_8)))
             }
 
-            // Reader: remote bytes into the emulator until EOF.
+            // Reader: remote bytes into the emulator until EOF. A clean EOF (n < 0)
+            // means the remote closed the channel — you logged out, or the server hung
+            // up; an exception means the transport died. The distinction rides out on
+            // Disconnected.clean so SessionManager only redials true drops, never an
+            // `exit`.
             thread(name = "charon-ssh-read-${session.id.take(8)}", isDaemon = true) {
                 val buf = ByteArray(32 * 1024)
-                var reason = "connection closed"
+                var reason = "returned to shore"
+                var clean = true
                 try {
                     val input = shell.inputStream
                     while (true) {
@@ -124,9 +129,10 @@ class SshjEngine : SshEngine {
                 } catch (e: Exception) {
                     Log.w(TAG, "reader stopped", e)
                     reason = e.message ?: e.javaClass.simpleName
+                    clean = false
                 } finally {
                     outbound.put(ChannelOp.Stop)
-                    session.state.value = TerminalSession.State.Disconnected(reason)
+                    session.state.value = TerminalSession.State.Disconnected(reason, clean)
                     runCatching { sshSession.close() }
                     runCatching { client.disconnect() }
                 }
