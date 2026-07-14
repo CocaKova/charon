@@ -26,6 +26,18 @@ class ScreenBuffer(
     fun scrollbackLine(index: Int): Line = scrollback[index]
 
     /**
+     * The line to draw at visible [row] when the view is scrolled back by
+     * [scrollOffset] rows (0 = live bottom). The virtual space is scrollback
+     * (oldest first) followed by the live grid; this walks that space so the
+     * renderer, selection and copy all agree on what a visible row means.
+     */
+    fun viewLine(scrollOffset: Int, row: Int): Line {
+        val off = scrollOffset.coerceIn(0, scrollback.size)
+        val v = scrollback.size - off + row
+        return if (v < scrollback.size) scrollback[v] else lines[v - scrollback.size]
+    }
+
+    /**
      * Scroll the region [top, bottom] (inclusive) up by [n]. When the region starts at
      * the top of a primary screen, evicted lines go to scrollback; otherwise they die.
      * Vacated lines at the bottom are cleared with [fillAttr].
