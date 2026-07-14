@@ -10,6 +10,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -58,7 +60,10 @@ import com.cocakova.charon.theme.WarnEmber
 @Composable
 fun TerminalScreen(
     session: TerminalSession,
-    onDismiss: () -> Unit,
+    sessions: List<TerminalSession>,
+    onSwitch: (String) -> Unit,
+    onClose: (String) -> Unit,
+    onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by session.state.collectAsState()
@@ -110,7 +115,13 @@ fun TerminalScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
-        SessionStatusStrip(session = session, state = state)
+        SessionSwitcher(
+            sessions = sessions,
+            activeId = session.id,
+            onSwitch = onSwitch,
+            onClose = onClose,
+            onNewSession = onNewSession,
+        )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // The IME anchor fills the terminal area (a sane rect for cursor-anchor
             // queries) and sits under the Canvas. Focus is requested through Compose's
@@ -123,6 +134,13 @@ fun TerminalScreen(
                         appCursorKeys = { session.term.cursorKeysApp }
                         mode = inputMode
                     }.also { inputView = it }
+                },
+                // Rebind to the active session each recomposition — one input view
+                // serves every tab, so a switch must re-point its callbacks or
+                // keystrokes keep flowing to the session you just left.
+                update = { view ->
+                    view.onInput = { emit(it, it.length == 1) }
+                    view.appCursorKeys = { session.term.cursorKeysApp }
                 },
                 modifier = Modifier.fillMaxSize().focusRequester(inputFocus),
             )
@@ -176,6 +194,19 @@ fun TerminalScreen(
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
+            if (state is TerminalSession.State.Connecting) {
+                Text(
+                    "crossing the Styx…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 16.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                )
+            }
             if (state is TerminalSession.State.Disconnected) {
                 Column(
                     modifier = Modifier
@@ -195,7 +226,7 @@ fun TerminalScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
                     )
-                    Button(onClick = onDismiss) { Text("back") }
+                    Button(onClick = { onClose(session.id) }) { Text("close") }
                 }
             }
         }
@@ -228,17 +259,65 @@ fun TerminalScreen(
 }
 
 /**
- * The slim chrome above the grid: state dot, who/where, live grid size. Termux has
- * no frame at all and Termius buries you in toolbar — Charon wears one thin band
- * of instrument panel. Later it becomes the session switcher.
+ * The session switcher: the thin band above the grid, now one tab per live crossing.
+ * Termux has no frame; Termius buries you in toolbar — Charon wears a row of ferries.
+ * Tap a tab to switch, × to close, + to raise another crossing from the Dock.
  */
 @Composable
-private fun SessionStatusStrip(
-    session: TerminalSession,
-    state: TerminalSession.State,
+private fun SessionSwitcher(
+    sessions: List<TerminalSession>,
+    activeId: String,
+    onSwitch: (String) -> Unit,
+    onClose: (String) -> Unit,
+    onNewSession: () -> Unit,
 ) {
-    val dims by session.dims.collectAsState()
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            sessions.forEach { s ->
+                SessionTab(
+                    session = s,
+                    active = s.id == activeId,
+                    onClick = { onSwitch(s.id) },
+                    onClose = { onClose(s.id) },
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onNewSession)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "+",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = StyxTeal,
+                )
+            }
+        }
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        )
+    }
+}
 
+/** One ferry in the switcher: a breathing state dot, its label, and a close ×. */
+@Composable
+private fun SessionTab(
+    session: TerminalSession,
+    active: Boolean,
+    onClick: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val state by session.state.collectAsState()
     val dotColor by animateColorAsState(
         targetValue = when (state) {
             is TerminalSession.State.Connected -> StyxTeal
@@ -246,9 +325,8 @@ private fun SessionStatusStrip(
             is TerminalSession.State.Disconnected -> WarnEmber
         },
         animationSpec = tween(400),
-        label = "stateDot",
+        label = "tabDot",
     )
-    // The dot breathes while the crossing holds — a slow 2.6s swell, not a blinker.
     val breathe by rememberInfiniteTransition(label = "breathe").animateFloat(
         initialValue = 0.45f,
         targetValue = 1f,
@@ -260,37 +338,43 @@ private fun SessionStatusStrip(
     )
     val dotAlpha = if (state is TerminalSession.State.Connected) breathe else 1f
 
-    Column {
-        Row(
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (active) MaterialTheme.colorScheme.surfaceVariant
+                else MaterialTheme.colorScheme.surface,
+            )
+            .clickable(onClick = onClick)
+            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .size(8.dp)
+                .graphicsLayer { alpha = dotAlpha }
+                .clip(CircleShape)
+                .background(dotColor),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            session.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (active) MaterialTheme.colorScheme.onSurface else MistGrey,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(onClick = onClose)
+                .padding(4.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .graphicsLayer { alpha = dotAlpha }
-                    .clip(CircleShape)
-                    .background(dotColor),
-            )
-            Spacer(Modifier.width(10.dp))
             Text(
-                session.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${dims.first}×${dims.second}",
-                style = MaterialTheme.typography.bodySmall,
+                "×",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MistGrey,
             )
         }
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        )
     }
 }

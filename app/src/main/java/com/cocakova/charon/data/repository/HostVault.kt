@@ -16,6 +16,10 @@ data class HostDraft(
     val username: String,
     val password: String,
     val identityId: String? = null,
+    val harbor: String = "",
+    val colorHex: String? = null,
+    val startupCommand: String = "",
+    val autoReconnect: Boolean = true,
 )
 
 /**
@@ -46,6 +50,10 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
                 username = draft.username.trim(),
                 passwordSealed = sealed,
                 identityId = draft.identityId,
+                harbor = draft.harbor.trim(),
+                colorHex = draft.colorHex,
+                startupCommand = draft.startupCommand.trim(),
+                autoReconnect = draft.autoReconnect,
                 lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                 createdAt = existing?.createdAt ?: now,
                 lastModified = now,
@@ -69,6 +77,8 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
                 ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
             privateKeyPem = material?.privateKey,
             keyPassphrase = material?.passphrase,
+            startupCommand = host.startupCommand,
+            autoReconnect = host.autoReconnect,
         )
     }
 
@@ -88,6 +98,8 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
                     ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
             privateKeyPem = material?.privateKey,
             keyPassphrase = material?.passphrase,
+            startupCommand = draft.startupCommand,
+            autoReconnect = draft.autoReconnect,
         )
     }
 

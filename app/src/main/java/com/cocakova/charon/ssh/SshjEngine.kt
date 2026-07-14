@@ -103,6 +103,13 @@ class SshjEngine : SshEngine {
             session.onOutput = { bytes -> outbound.put(ChannelOp.Write(bytes)) }
             session.onResize = { cols, rows -> outbound.put(ChannelOp.Resize(cols, rows)) }
 
+            // Startup command (tmux auto-attach and friends): typed into the fresh
+            // shell so it runs on every crossing — including an auto-reconnect redial,
+            // which is what lands you back in the same tmux after the network blips.
+            config.startupCommand.trim().takeIf { it.isNotEmpty() }?.let { cmd ->
+                outbound.put(ChannelOp.Write((cmd + "\n").toByteArray(Charsets.UTF_8)))
+            }
+
             // Reader: remote bytes into the emulator until EOF.
             thread(name = "charon-ssh-read-${session.id.take(8)}", isDaemon = true) {
                 val buf = ByteArray(32 * 1024)

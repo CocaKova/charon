@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -38,12 +39,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
-import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
 import com.cocakova.charon.theme.StyxTeal
 
@@ -92,7 +93,7 @@ fun AccessoryRow(
         StickyKey("ctrl", ctrl, onTap = onCtrl, onLock = onCtrlLock)
         StickyKey("alt", alt, onTap = onAlt, onLock = onAltLock)
 
-        Divider()
+        GroupGap()
 
         if (!fnPage) {
             // Arrows auto-repeat on hold; that reads more naturally than a variant.
@@ -113,7 +114,7 @@ fun AccessoryRow(
             for ((label, key) in FUNCTION_KEYS) AccessoryKey(label) { onKey(key) }
         }
 
-        Divider()
+        GroupGap()
 
         AccessoryKey("paste") { onPaste() }
         // Fn: swaps the middle of the row to the F-key page. Gold while on it.
@@ -137,15 +138,14 @@ private val FUNCTION_KEYS = listOf(
     "F10" to KeyEncoder.Key.F10, "F11" to KeyEncoder.Key.F11, "F12" to KeyEncoder.Key.F12,
 )
 
+/**
+ * Group separation by whitespace rather than a hairline — a wider breath than the
+ * gap between adjacent keys, so modifiers / navigation / actions read as clusters
+ * without a rule drawn between them. Cleaner than the old 1px divider.
+ */
 @Composable
-private fun Divider() {
-    Spacer(
-        Modifier
-            .padding(horizontal = 5.dp)
-            .width(1.dp)
-            .height(22.dp)
-            .background(MistGrey.copy(alpha = 0.25f)),
-    )
+private fun GroupGap() {
+    Spacer(Modifier.width(14.dp))
 }
 
 /**
@@ -246,7 +246,12 @@ private fun AccessoryKey(
     )
 }
 
-/** Shared pill visual: sink-and-spring scale on press, JetBrains Mono label. */
+/**
+ * Shared pill visual: sink-and-spring scale on press, JetBrains Mono label. Every
+ * pill honours a uniform [minWidth] so single-glyph keys (arrows, symbols) square up
+ * into the same grid rhythm as the word keys — the row reads as one designed
+ * keyboard, not a ragged scroll. Wide labels grow past it on their own.
+ */
 @Composable
 private fun KeyPill(
     label: String,
@@ -254,6 +259,7 @@ private fun KeyPill(
     content: Color,
     bold: Boolean,
     modifier: Modifier = Modifier,
+    minWidth: Dp = 42.dp,
     interaction: MutableInteractionSource = remember { MutableInteractionSource() },
     forcePressed: Boolean = false,
 ) {
@@ -267,8 +273,9 @@ private fun KeyPill(
         modifier = Modifier
             .padding(horizontal = 3.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .height(36.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .height(38.dp)
+            .widthIn(min = minWidth)
+            .clip(RoundedCornerShape(9.dp))
             .background(container)
             .then(modifier),
         contentAlignment = Alignment.Center,
@@ -279,7 +286,7 @@ private fun KeyPill(
             fontSize = 13.sp,
             fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
             color = content,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
         )
     }
 }

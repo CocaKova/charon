@@ -23,7 +23,8 @@ import com.cocakova.charon.R
  * sessions; this service owns only the notification and the foreground state.
  *
  * v0.1 uses START_NOT_STICKY: a process death kills the session anyway, and a zombie
- * service with nothing to show for it helps no one. Auto-reconnect (v0.5) revisits.
+ * service with nothing to show for it helps no one. Auto-reconnect lives in
+ * SessionManager (network-callback redial), not a sticky service.
  */
 class ConnectionService : Service() {
 
@@ -32,21 +33,22 @@ class ConnectionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_DISCONNECT -> {
-                (applicationContext as CharonApp).sessionManager.disconnect()
+                (applicationContext as CharonApp).sessionManager.closeAll()
                 stopSelf()
                 return START_NOT_STICKY
             }
         }
-        val label = intent?.getStringExtra(EXTRA_LABEL) ?: "session"
+        val count = intent?.getIntExtra(EXTRA_COUNT, 1) ?: 1
+        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "session"
         ensureChannel()
         val type = if (Build.VERSION.SDK_INT >= 34) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else 0
-        ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(label), type)
+        ServiceCompat.startForeground(this, NOTIF_ID, buildNotification(count, text), type)
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(label: String): Notification {
+    private fun buildNotification(count: Int, text: String): Notification {
         val tapIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
@@ -57,15 +59,18 @@ class ConnectionService : Service() {
             Intent(this, ConnectionService::class.java).setAction(ACTION_DISCONNECT),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val title = if (count == 1) "Charon — crossing active"
+        else "Charon — $count crossings active"
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_charon)
-            .setContentTitle("Charon — crossing active")
-            .setContentText(label)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(tapIntent)
-            .addAction(0, "Disconnect", disconnectIntent)
+            .addAction(0, if (count == 1) "Disconnect" else "Disconnect all", disconnectIntent)
             .build()
     }
 
@@ -83,11 +88,13 @@ class ConnectionService : Service() {
         private const val CHANNEL_ID = "charon_session"
         private const val NOTIF_ID = 1
         private const val ACTION_DISCONNECT = "com.cocakova.charon.DISCONNECT"
-        private const val EXTRA_LABEL = "label"
+        private const val EXTRA_COUNT = "count"
+        private const val EXTRA_TEXT = "text"
 
-        fun start(context: Context, label: String) {
+        fun start(context: Context, count: Int, text: String) {
             val intent = Intent(context, ConnectionService::class.java)
-                .putExtra(EXTRA_LABEL, label)
+                .putExtra(EXTRA_COUNT, count)
+                .putExtra(EXTRA_TEXT, text)
             ContextCompat.startForegroundService(context, intent)
         }
 

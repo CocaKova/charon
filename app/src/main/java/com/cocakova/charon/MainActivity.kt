@@ -31,7 +31,6 @@ import com.cocakova.charon.presentation.dock.TrustGate
 import com.cocakova.charon.presentation.terminal.TerminalScreen
 import com.cocakova.charon.ssh.ConnectConfig
 import com.cocakova.charon.ssh.SessionManager
-import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.theme.CharonTheme
 import kotlinx.coroutines.launch
 
@@ -98,16 +97,18 @@ private fun CharonRoot(
     hostVault: HostVault,
     keyVault: KeyVault,
 ) {
-    val session by sessionManager.activeSession.collectAsState()
+    val active by sessionManager.activeSession.collectAsState()
+    val sessions by sessionManager.sessions.collectAsState()
     val error by sessionManager.lastError.collectAsState()
     val pendingTrust by sessionManager.pendingTrust.collectAsState()
     val hosts by hostVault.hosts.collectAsState(initial = emptyList())
     val identities by keyVault.identities.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
 
-    val current = session
-    val state = current?.let { it.state.collectAsState().value }
-    val showTerminal = current != null && state !is TerminalSession.State.Connecting
+    val current = active
+    // Terminal on screen whenever a session is active; null active = the Dock, with
+    // any live crossings still running in the background.
+    val showTerminal = current != null
 
     // Count returns from sea so the Dock can play the ferry docking on arrival.
     var atSea by remember { mutableStateOf(false) }
@@ -130,13 +131,18 @@ private fun CharonRoot(
         if (terminal && current != null) {
             TerminalScreen(
                 session = current,
-                onDismiss = { sessionManager.dismissSession() },
+                sessions = sessions,
+                onSwitch = { sessionManager.switchTo(it) },
+                onClose = { sessionManager.close(it) },
+                onNewSession = { sessionManager.showDock() },
             )
         } else {
             DockScreen(
                 hosts = hosts,
                 identities = identities,
-                connecting = current != null,
+                runningSessions = sessions,
+                onResumeSession = { sessionManager.switchTo(it) },
+                connecting = false,
                 arrivals = arrivals,
                 error = error,
                 onConnect = { host ->

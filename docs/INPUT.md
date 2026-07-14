@@ -34,11 +34,15 @@ names only.
 ## 2. The accessory row — the flagship
 
 `presentation/terminal/AccessoryRow.kt`. Horizontally scrollable, JetBrains Mono
-labels, DepthSlate pills, a sink-and-spring press + teal ripple. Layout:
+labels, DepthSlate pills, a sink-and-spring press + teal ripple. Every pill honours
+a uniform min-width so single-glyph keys (arrows, symbols) square up into the same
+grid rhythm as the word keys — the row reads as one designed keyboard, not a ragged
+scroll. Logical clusters are set apart by **whitespace** (a wider breath, `GroupGap`)
+rather than a hairline rule. Layout:
 
 ```
-esc  tab  ctrl  alt │ ↑ ↓ ← →  -  /  |  ~  home end pgup pgdn │ paste  fn  abc
-                                    └── swaps to F1…F12 when fn is on ──┘
+ esc  tab  ctrl  alt    ↑  ↓  ←  →   -  /  |  ~   home end pgup pgdn    paste  fn  abc
+                                       └── swaps to F1…F12 when fn is on ──┘
 ```
 
 ### Sticky modifiers (Ctrl, Alt)
