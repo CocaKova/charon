@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.cocakova.charon.data.db.PortForwardEntity
 import com.cocakova.charon.theme.BoneWhite
+import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
 import com.cocakova.charon.theme.StyxTeal
@@ -137,6 +138,14 @@ fun ForwardsSheet(
             Spacer(Modifier.height(10.dp))
 
             if (forwards.isEmpty() && !adding) {
+                // Open water on the chart — nothing drawn on it yet.
+                Text(
+                    "~    ≈    ~    ≈    ~",
+                    fontFamily = CharonMono,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = StyxTeal.copy(alpha = 0.45f),
+                    modifier = Modifier.padding(top = 6.dp),
+                )
                 Text(
                     "no channels charted for this host yet",
                     style = MaterialTheme.typography.bodyMedium,

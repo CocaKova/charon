@@ -9,7 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -38,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -213,19 +213,22 @@ private fun AccessoryKey(
         label = "keyContent",
     )
 
-    // Repeatable keys drive the action from a LaunchedEffect keyed on a pressed flag
-    // the gesture toggles — waitForUpOrCancellation lives in a restricted suspend
-    // scope and can't be wrapped in withTimeout, so the timing lives outside it.
+    // Repeatable keys drive the auto-repeat from a LaunchedEffect keyed on a pressed
+    // flag the gesture toggles. The gesture is deliberately swipe-proof: a keyboard
+    // glide or a row-scroll that crosses the key must not type — so a clean tap fires
+    // on the up-stroke (within touch slop), a still hold starts the repeat, and any
+    // slop-breaking movement or a scroll consuming the pointer cancels outright.
     val haptic = LocalHapticFeedback.current
     var held by remember { mutableStateOf(false) }
+    var holdFired by remember { mutableStateOf(false) }
     if (repeatable) {
         LaunchedEffect(held) {
             if (held) {
-                // One click on the down-stroke; the repeats run silent so a held
-                // arrow doesn't turn the phone into a buzzer.
-                haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
-                onPress()
                 delay(400)
+                // Commit point: the hold is real. One click, then silent repeats so a
+                // held arrow doesn't turn the phone into a buzzer.
+                holdFired = true
+                haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                 while (true) {
                     onPress()
                     delay(60)
@@ -237,10 +240,31 @@ private fun AccessoryKey(
     val press = Modifier.when_(repeatable) {
         pointerInput(Unit) {
             awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
+                val down = awaitFirstDown(requireUnconsumed = false)
+                holdFired = false
                 held = true
-                waitForUpOrCancellation()
+                var cancelled = false
+                while (true) {
+                    // Watch in the Final pass so the scroll row's consumption is
+                    // visible — a horizontal fling scrolls keys under a stationary
+                    // finger without ever breaking slop locally.
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    val ch = event.changes.firstOrNull { it.id == down.id }
+                    if (ch == null || ch.isConsumed) {
+                        cancelled = true
+                        break
+                    }
+                    if (!ch.pressed) break
+                    if ((ch.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                        cancelled = true
+                        break
+                    }
+                }
                 held = false
+                if (!cancelled && !holdFired) {
+                    haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                    onPress()
+                }
             }
         }
     }.when_(!repeatable) {

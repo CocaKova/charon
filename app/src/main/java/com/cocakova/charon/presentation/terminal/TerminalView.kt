@@ -99,12 +99,38 @@ fun TerminalView(
         }
     }
 
-    fun cellOf(pos: Offset): TextSelection.Cell {
+    // Two coordinate spaces meet at the glass. Mouse reporting wants viewport cells
+    // (what the remote app drew where); selection wants buffer cells (negative rows =
+    // scrollback) so a selection stays glued to its text while the view scrolls.
+    fun viewCellOf(pos: Offset): TextSelection.Cell {
         val col = ((pos.x - paints.padX) / paints.cellWidth).toInt()
             .coerceIn(0, (session.term.cols - 1).coerceAtLeast(0))
         val row = ((pos.y - paints.padY) / paints.cellHeight).toInt()
             .coerceIn(0, (session.term.rows - 1).coerceAtLeast(0))
         return TextSelection.Cell(row, col)
+    }
+
+    fun selCellOf(pos: Offset): TextSelection.Cell {
+        val v = viewCellOf(pos)
+        return TextSelection.Cell(v.row - session.scrollOffset.value, v.col)
+    }
+
+    // Selection edge-crawl: while a select-drag holds at the glass's top or bottom,
+    // the viewport steps a row at a time (+1 = older) and the selection's focus rides
+    // the revealed edge — how a finger reaches text that's off-screen.
+    var selEdgeDrag by remember { mutableStateOf(0) }
+    var selEdgeCol by remember { mutableStateOf(0) }
+    LaunchedEffect(session) {
+        snapshotFlow { selEdgeDrag }.collectLatest { dir ->
+            while (dir != 0) {
+                session.scrollBy(dir)
+                val edgeViewRow = if (dir > 0) 0 else session.term.rows - 1
+                session.extendSelection(
+                    TextSelection.Cell(edgeViewRow - session.scrollOffset.value, selEdgeCol),
+                )
+                delay(80)
+            }
+        }
     }
 
     Canvas(
@@ -122,12 +148,12 @@ fun TerminalView(
             // already shows); otherwise just focus and raise.
             .pointerInput(session, paints) {
                 detectTapGestures(
-                    onLongPress = { pos -> session.selectWordAt(cellOf(pos)) },
+                    onLongPress = { pos -> session.selectWordAt(selCellOf(pos)) },
                     onTap = { pos ->
                         when {
                             session.selection.value != null -> session.clearSelection()
                             session.mouseActive -> {
-                                session.mouseClick(cellOf(pos))
+                                session.mouseClick(viewCellOf(pos))
                                 onRequestFocus()
                             }
                             else -> onRequestFocus()
@@ -135,25 +161,38 @@ fun TerminalView(
                     },
                 )
             }
-            // Drag: extend a long-press selection; in a mouse app send wheel notches;
-            // otherwise scroll our own scrollback. One notch per cell-height dragged.
+            // Drag: extend a selection when the drag starts on it; in a mouse app send
+            // wheel notches; otherwise scroll our own scrollback (the selection now
+            // survives that — grab clear water to scroll, grab the selection to grow
+            // it). One notch per cell-height dragged.
             .pointerInput(session, paints) {
                 var mode = DragMode.NONE
                 var startCell = TextSelection.Cell(0, 0)
                 var accum = 0f
                 detectDragGestures(
                     onDragStart = { pos ->
-                        startCell = cellOf(pos)
+                        startCell = viewCellOf(pos)
                         accum = 0f
+                        val sel = session.selection.value
                         mode = when {
-                            session.selection.value != null -> DragMode.SELECT // from long-press
+                            sel != null && nearSelection(sel, selCellOf(pos)) -> DragMode.SELECT
                             session.mouseActive -> DragMode.WHEEL
                             else -> DragMode.SCROLL
                         }
                     },
                     onDrag = { change, drag ->
                         when (mode) {
-                            DragMode.SELECT -> session.extendSelection(cellOf(change.position))
+                            DragMode.SELECT -> {
+                                session.extendSelection(selCellOf(change.position))
+                                // Past the glass top/bottom: crawl the viewport so the
+                                // selection can keep growing into scrollback / back to live.
+                                selEdgeDrag = when {
+                                    change.position.y < paints.cellHeight * 0.5f -> 1
+                                    change.position.y > size.height - paints.cellHeight * 0.5f -> -1
+                                    else -> 0
+                                }
+                                selEdgeCol = selCellOf(change.position).col
+                            }
                             DragMode.WHEEL -> {
                                 accum += drag.y
                                 while (accum >= paints.cellHeight) {
@@ -176,8 +215,8 @@ fun TerminalView(
                             DragMode.NONE -> {}
                         }
                     },
-                    onDragEnd = { mode = DragMode.NONE },
-                    onDragCancel = { mode = DragMode.NONE },
+                    onDragEnd = { mode = DragMode.NONE; selEdgeDrag = 0 },
+                    onDragCancel = { mode = DragMode.NONE; selEdgeDrag = 0 },
                 )
             },
     ) {
@@ -196,6 +235,17 @@ fun TerminalView(
 }
 
 private enum class DragMode { NONE, SELECT, WHEEL, SCROLL }
+
+/**
+ * A drag "grabs" the selection when it starts within a row of it; anywhere else the
+ * drag scrolls. This is what lets a selection survive scrolling — it no longer
+ * hijacks every drag on the screen.
+ */
+private fun nearSelection(sel: TerminalSession.Selection, cell: TextSelection.Cell): Boolean {
+    val lo = minOf(sel.anchor.row, sel.focus.row) - 1
+    val hi = maxOf(sel.anchor.row, sel.focus.row) + 1
+    return cell.row in lo..hi
+}
 
 /** The water's glow: the cursor is StyxTeal, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
@@ -251,7 +301,7 @@ private fun drawTerminal(
 
     // Selection tint under the glyphs: a translucent wash of the river's teal.
     if (selection != null) {
-        drawSelection(canvas, p, term, selection, cw, ch)
+        drawSelection(canvas, p, term, selection, cw, ch, scrollOffset)
     }
 
     for (row in 0 until term.rows) {
@@ -341,7 +391,11 @@ private fun drawTerminal(
     canvas.restore()
 }
 
-/** Wash the selected cells teal, computing each row's span like the copy does. */
+/**
+ * Wash the selected cells teal, computing each row's span like the copy does. The
+ * selection lives in buffer space (negative rows = scrollback); each row maps onto
+ * the viewport through [scrollOffset], and rows off the glass simply don't draw.
+ */
 private fun drawSelection(
     canvas: android.graphics.Canvas,
     p: TerminalPaints,
@@ -349,20 +403,24 @@ private fun drawSelection(
     selection: TerminalSession.Selection,
     cw: Float,
     ch: Float,
+    scrollOffset: Int,
 ) {
     val a = selection.anchor
     val b = selection.focus
     val (start, end) = if (a.row < b.row || (a.row == b.row && a.col <= b.col)) a to b else b to a
-    val firstRow = start.row.coerceIn(0, term.rows - 1)
-    val lastRow = end.row.coerceIn(0, term.rows - 1)
     p.fill.color = CURSOR_TEAL
     p.fill.alpha = 70
-    for (row in firstRow..lastRow) {
-        val from = if (row == firstRow) start.col.coerceIn(0, term.cols - 1) else 0
-        val to = if (row == lastRow) end.col.coerceIn(0, term.cols - 1) else term.cols - 1
+    // Clamp the walk to the visible window up front — a select-all over a deep
+    // scrollback must not iterate thousands of off-screen rows every frame.
+    val firstVisible = maxOf(start.row, -scrollOffset)
+    val lastVisible = minOf(end.row, term.rows - 1 - scrollOffset)
+    for (row in firstVisible..lastVisible) {
+        val viewRow = row + scrollOffset
+        val from = if (row == start.row) start.col.coerceIn(0, term.cols - 1) else 0
+        val to = if (row == end.row) end.col.coerceIn(0, term.cols - 1) else term.cols - 1
         val left = from * cw
         val right = (to + 1) * cw
-        val top = row * ch
+        val top = viewRow * ch
         canvas.drawRect(left, top, right, top + ch, p.fill)
     }
     p.fill.alpha = 255

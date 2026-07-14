@@ -79,10 +79,12 @@ Long-press reaches the shifted mate the soft keyboard buries:
 
 ### Auto-repeat
 
-`↑ ↓ ← →` and `pgup`/`pgdn` repeat while held — fire on down, then ramp from a
-400 ms delay to 60 ms (driven by a `LaunchedEffect` keyed on a pressed flag the
-gesture toggles; `waitForUpOrCancellation` is a restricted-suspend call, so the
-timing has to live outside it).
+`↑ ↓ ← →` and `pgup`/`pgdn` repeat while held: a clean tap fires on the
+up-stroke, a still hold starts repeating after 400 ms at 60 ms per step (a
+`LaunchedEffect` keyed on a pressed flag the gesture toggles). The gesture is
+**swipe-proof**: moving past touch slop, or the row's own scroll consuming the
+pointer (watched in the `Final` pass), cancels without typing — so a keyboard
+glide or a row fling crossing an arrow key can't recall history lines.
 
 ### Fn page
 
@@ -123,7 +125,9 @@ command.
   `^U` reset; `^W` deletes a word; `\r`/`\n` commits the line to history. The moment
   editing goes non-linear — any arrow/edit escape or a `\t` completion — the tracker
   stops trusting its reconstruction and blanks the draft, so it never suggests
-  against a wrong prefix.
+  against a wrong prefix. Crossing into or out of the **alternate screen** (tmux,
+  vim, htop) resets the tracker too — the line belonged to a different world, so
+  stale text can't keep feeding suggestions after you step back out.
 - **The offer** — up to six chips: a gold `»`, the part you typed dimmed, the
   completion glowing teal.
 - **Accepting** — a tap types *only the missing tail* (token completions add the
@@ -142,9 +146,14 @@ the remote app has requested mouse tracking (DECSET 9/1000/1002/1003).
 |----------------------|----------------------------------|-----------------------------------|
 | **tap**              | clear selection, else focus + IME| clear selection, else mouse click |
 | **long-press**       | select the word under the finger | *(same — local select always works so you can copy out of a mouse app)* |
-| **drag** (plain)     | scroll our scrollback            | send wheel notches                |
-| **drag** (after long-press) | extend the selection      | extend the selection              |
+| **drag** (clear water) | scroll our scrollback          | send wheel notches                |
+| **drag** (starting on the selection, ±1 row) | extend the selection | extend the selection |
 | **pinch**            | zoom the font (8–32 sp, persisted) | zoom the font                   |
+
+A selection no longer hijacks every drag: grab the selection (or the row beside
+it) to grow it, grab anywhere else to scroll — the selection survives the scroll.
+Holding a select-drag at the glass's top or bottom edge crawls the viewport a row
+at a time, so one gesture can walk a selection deep into scrollback.
 
 One "notch" = one cell-height of travel. Fast flicks barely move (the OS eats
 them as a fling); a slower drag scrolls smoothly.
@@ -154,11 +163,17 @@ them as a fling); a slower drag scrolls smoothly.
 ## 4. Selection, copy & paste
 
 - **Long-press** selects the word (`TextSelection.wordAt` keeps paths/URLs/idents
-  whole); **drag** extends it. The selection is washed in translucent StyxTeal.
-- A **copy** pill (teal, top-right) appears while a selection holds → Android
-  clipboard, then clears. Copy is scroll-aware: it reads the viewport you're
-  looking at (`TextSelection.extract` with the scroll offset), soft-wrapped rows
-  joined without a newline, per-row trailing spaces trimmed.
+  whole); **drag from it** extends it. The selection is washed in translucent
+  StyxTeal.
+- Selections live in **buffer space** (row 0 = top of the live grid, negative
+  rows reach into scrollback — `ScreenBuffer.relativeLine`), so a selection stays
+  glued to its text while you scroll, slides back naturally as new output evicts
+  lines into history, and one selection can span scrollback and the live screen.
+  Entering/leaving the alternate screen clears it (different world).
+- **copy** and **all** pills (top-right) appear while a selection holds: **all**
+  swells the selection to the entire scrollback + screen, **copy** → Android
+  clipboard, then clears. Extraction joins soft-wrapped rows without a newline
+  and trims per-row trailing spaces.
 - **paste** key → `KeyEncoder.paste`, bracketed-guarded (`ESC[200~…ESC[201~`)
   when the app enabled DECSET 2004, CR line endings either way.
 
