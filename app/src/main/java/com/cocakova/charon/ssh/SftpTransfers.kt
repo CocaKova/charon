@@ -38,6 +38,7 @@ class SftpTransfers(private val appContext: Context) {
         val total: Long,          // -1 = unknown
         val state: State,
         val error: String? = null,
+        val landedAt: Uri? = null, // pull destination — lets the ledger open what landed
     )
 
     /** The ledger, newest first. Finished entries linger briefly, then clear. */
@@ -48,7 +49,7 @@ class SftpTransfers(private val appContext: Context) {
     /** Carry a remote file ashore into a SAF document. */
     fun pull(openSftp: () -> SftpChannel?, remotePath: String, size: Long, dest: Uri) {
         val name = remotePath.substringAfterLast('/')
-        start(name, Direction.PULL, size) { id ->
+        start(name, Direction.PULL, size, dest) { id ->
             var offset = 0L
             retrying { attempt ->
                 val sftp = openSftp() ?: error("the hold is unreachable")
@@ -93,10 +94,16 @@ class SftpTransfers(private val appContext: Context) {
 
     // ---- machinery -------------------------------------------------------------------
 
-    private fun start(name: String, dir: Direction, total: Long, body: suspend (String) -> Unit) {
+    private fun start(
+        name: String,
+        dir: Direction,
+        total: Long,
+        landedAt: Uri? = null,
+        body: suspend (String) -> Unit,
+    ) {
         val id = UUID.randomUUID().toString()
         transfers.update {
-            listOf(Transfer(id, name, dir, 0, total, State.RUNNING)) + it
+            listOf(Transfer(id, name, dir, 0, total, State.RUNNING, landedAt = landedAt)) + it
         }
         scope.launch {
             try {
@@ -105,8 +112,8 @@ class SftpTransfers(private val appContext: Context) {
             } catch (e: Exception) {
                 setState(id) { it.copy(state = State.FAILED, error = e.message ?: "the crossing failed") }
             }
-            // Let the outcome be seen, then clear the ledger line.
-            delay(if (transfers.value.firstOrNull { it.id == id }?.state == State.DONE) 4_000 else 20_000)
+            // Let the outcome be seen (long enough to tap a landed pull open), then clear.
+            delay(if (transfers.value.firstOrNull { it.id == id }?.state == State.DONE) 6_000 else 20_000)
             transfers.update { list -> list.filterNot { it.id == id } }
         }
     }
