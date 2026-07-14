@@ -1,8 +1,20 @@
 package com.cocakova.charon.presentation.sftp
 
+import android.content.Intent
+import android.webkit.MimeTypeMap
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -47,7 +59,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,9 +99,12 @@ fun FilesScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var channel by remember { mutableStateOf<SftpChannel?>(null) }
     var dir by remember { mutableStateOf<String?>(null) }
-    var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
+    // The landed listing keeps its dir alongside it, so a change of deck can slide in
+    // the direction of travel while the old deck stays put until the new one arrives.
+    var listing by remember { mutableStateOf<Pair<String, List<RemoteEntry>>?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<RemoteEntry?>(null) }
@@ -126,7 +143,7 @@ fun FilesScreen(
         withContext(Dispatchers.IO) {
             runCatching { ch.list(d) }
                 .onSuccess { list ->
-                    entries = list.sortedWith(
+                    listing = d to list.sortedWith(
                         compareByDescending<RemoteEntry> { it.isDir }
                             .thenBy { it.name.lowercase() },
                     )
@@ -186,10 +203,18 @@ fun FilesScreen(
             onUpload = { pushLauncher.launch(arrayOf("*/*")) },
         )
         HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+        // A quiet pulse under the bar while a listing is in flight over the old deck.
+        if (loading && listing != null) {
+            LinearProgressIndicator(
+                color = StyxTeal,
+                trackColor = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+            )
+        }
 
         Box(Modifier.weight(1f)) {
             when {
-                loading && entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                loading && listing == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = StyxTeal)
                 }
                 error != null -> Column(
@@ -201,21 +226,46 @@ fun FilesScreen(
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = { refreshTick++ }) { Text("try again") }
                 }
-                else -> LazyColumn(Modifier.fillMaxSize()) {
-                    val d = dir
-                    if (d != null && d != "/" && d.isNotEmpty()) {
-                        item(key = "..") {
-                            UpRow { dir = d.trimEnd('/').substringBeforeLast('/').ifEmpty { "/" } }
+                else -> AnimatedContent(
+                    targetState = listing,
+                    transitionSpec = {
+                        val from = initialState?.first ?: ""
+                        val to = targetState?.first ?: ""
+                        if (from == to) {
+                            // Same deck refreshed (rename/delete/mkdir): just settle.
+                            fadeIn(tween(150)) togetherWith fadeOut(tween(150))
+                        } else {
+                            // Slide in the direction of travel: deeper comes from the
+                            // right, climbing out comes from the left.
+                            val way = if (to.count { it == '/' } > from.count { it == '/' }) 1 else -1
+                            (slideInHorizontally(tween(220)) { it / 3 * way } + fadeIn(tween(220))) togetherWith
+                                (slideOutHorizontally(tween(220)) { -it / 3 * way } + fadeOut(tween(180)))
                         }
-                    }
-                    items(entries, key = { it.path }) { entry ->
-                        EntryRow(
-                            entry = entry,
-                            onOpen = {
-                                if (entry.isDir) dir = entry.path else selected = entry
-                            },
-                            onLongPress = { selected = entry },
-                        )
+                    },
+                    label = "deck",
+                ) { deck ->
+                    if (deck == null) {
+                        Box(Modifier.fillMaxSize())
+                    } else LazyColumn(Modifier.fillMaxSize()) {
+                        val d = deck.first
+                        if (d != "/" && d.isNotEmpty()) {
+                            item(key = "..") {
+                                UpRow { dir = d.trimEnd('/').substringBeforeLast('/').ifEmpty { "/" } }
+                            }
+                        }
+                        items(deck.second, key = { it.path }) { entry ->
+                            EntryRow(
+                                entry = entry,
+                                onOpen = {
+                                    if (entry.isDir) dir = entry.path else selected = entry
+                                },
+                                onLongPress = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selected = entry
+                                },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
                     }
                 }
             }
@@ -224,8 +274,30 @@ fun FilesScreen(
         // The cargo ledger: every crossing in flight.
         if (ledger.isNotEmpty()) {
             HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                ledger.forEach { t -> TransferRow(t) }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .animateContentSize()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                ledger.forEach { t ->
+                    TransferRow(t) { landed ->
+                        // A landed pull opens where it landed — extension mime first,
+                        // since CREATE_DOCUMENT stamped it octet-stream.
+                        val ext = landed.name.substringAfterLast('.', "").lowercase(Locale.US)
+                        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                            ?: "*/*"
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW)
+                                    .setDataAndType(landed.landedAt, mime)
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                            )
+                        }.onFailure {
+                            Toast.makeText(context, "no app aboard can open this", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             }
         }
     }
@@ -386,9 +458,10 @@ private fun EntryRow(
     entry: RemoteEntry,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
             .padding(horizontal = 16.dp, vertical = 9.dp),
@@ -474,14 +547,38 @@ private fun SheetAction(label: String, tint: androidx.compose.ui.graphics.Color,
 }
 
 @Composable
-private fun TransferRow(t: SftpTransfers.Transfer) {
+private fun TransferRow(t: SftpTransfers.Transfer, onOpen: (SftpTransfers.Transfer) -> Unit) {
+    val haptic = LocalHapticFeedback.current
     val tint = when (t.state) {
         SftpTransfers.State.FAILED -> WarnEmber
         SftpTransfers.State.DONE -> StyxTeal
         SftpTransfers.State.RUNNING ->
             if (t.direction == SftpTransfers.Direction.PULL) StyxTeal else ObolGold
     }
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    // The drawn bar chases the real offset from zero, so even an instant crossing
+    // sweeps the width — the eye needs the journey, however short the river.
+    val sweep = remember { Animatable(0f) }
+    val target = when {
+        t.state == SftpTransfers.State.DONE -> 1f
+        t.total > 0 -> (t.done.toFloat() / t.total).coerceIn(0f, 1f)
+        else -> 0f
+    }
+    LaunchedEffect(target) { sweep.animateTo(target, tween(450)) }
+    LaunchedEffect(t.state) {
+        when (t.state) {
+            SftpTransfers.State.DONE -> haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            SftpTransfers.State.FAILED -> haptic.performHapticFeedback(HapticFeedbackType.Reject)
+            SftpTransfers.State.RUNNING -> Unit
+        }
+    }
+    val openable = t.state == SftpTransfers.State.DONE && t.landedAt != null
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .then(if (openable) Modifier.clickable { onOpen(t) } else Modifier)
+            .padding(vertical = 4.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 if (t.direction == SftpTransfers.Direction.PULL) "⇣" else "⇡",
@@ -500,21 +597,33 @@ private fun TransferRow(t: SftpTransfers.Transfer) {
             Spacer(Modifier.width(8.dp))
             Text(
                 when (t.state) {
-                    SftpTransfers.State.FAILED -> t.error ?: "failed"
-                    SftpTransfers.State.DONE -> "ashore"
+                    SftpTransfers.State.FAILED -> t.error ?: "the crossing failed"
+                    SftpTransfers.State.DONE ->
+                        if (openable) "✓ ashore — tap to open" else "✓ aboard"
                     SftpTransfers.State.RUNNING ->
                         if (t.total > 0) "${humanBytes(t.done)} / ${humanBytes(t.total)}"
                         else humanBytes(t.done)
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (t.state == SftpTransfers.State.FAILED) WarnEmber else MistGrey,
+                color = when (t.state) {
+                    SftpTransfers.State.FAILED -> WarnEmber
+                    SftpTransfers.State.DONE -> tint
+                    SftpTransfers.State.RUNNING -> MistGrey
+                },
                 maxLines = 1,
             )
         }
         Spacer(Modifier.height(3.dp))
-        if (t.state == SftpTransfers.State.RUNNING && t.total > 0) {
+        if (t.state == SftpTransfers.State.RUNNING && t.total <= 0) {
+            // Size unknown — the river still has to look like it's moving.
             LinearProgressIndicator(
-                progress = { (t.done.toFloat() / t.total).coerceIn(0f, 1f) },
+                color = tint,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
+            )
+        } else {
+            LinearProgressIndicator(
+                progress = { sweep.value },
                 color = tint,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
