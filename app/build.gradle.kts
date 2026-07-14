@@ -85,6 +85,8 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.biometric)
+  // Overrides the ancient fragment that biometric drags in; see libs.versions.toml.
+  implementation(libs.androidx.fragment.ktx)
 
   // Arch Components
   implementation(libs.androidx.lifecycle.runtime.compose)
