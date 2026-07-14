@@ -37,6 +37,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -97,6 +98,7 @@ fun DockScreen(
     val haptic = LocalHapticFeedback.current
 
     var showKeys by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     // Harbors the user has folded shut. Ephemeral by design — a fresh launch shows
     // the whole fleet.
@@ -138,6 +140,14 @@ fun DockScreen(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
             ) {
                 Icon(Icons.Outlined.Key, contentDescription = "keys of passage",
+                    tint = MaterialTheme.colorScheme.primary)
+            }
+            // The helm: settings, mirroring the keys on the far side.
+            IconButton(
+                onClick = { showSettings = true },
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
+            ) {
+                Icon(Icons.Outlined.Settings, contentDescription = "the helm",
                     tint = MaterialTheme.colorScheme.primary)
             }
         }
@@ -284,7 +294,11 @@ fun DockScreen(
             onRelease = onReleaseKey,
             onGrant = onGrantKey,
         )
-}
+    }
+
+    if (showSettings) {
+        SettingsSheet(onDismiss = { showSettings = false })
+    }
 }
 
 sealed class EditTarget {
