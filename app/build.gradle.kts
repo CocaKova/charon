@@ -4,6 +4,7 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.ksp)
 }
 
 // Release signing comes from local.properties (never committed):
@@ -25,8 +26,8 @@ android {
         applicationId = "com.cocakova.charon"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
     }
 
     signingConfigs {
@@ -108,6 +109,11 @@ dependencies {
 
   // Serialization
   implementation(libs.kotlinx.serialization.json)
+
+  // Host vault
+  implementation(libs.room.runtime)
+  implementation(libs.room.ktx)
+  ksp(libs.room.compiler)
 
   // Local tests
   testImplementation(libs.junit)

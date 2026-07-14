@@ -12,7 +12,9 @@ coroutines = "1.10.2"
 junit = "4.13.2"
 kotlin = "2.0.0"
 ksp = "2.0.0-1.0.21"
-room = "2.6.1"
+# 2.6.x cannot read Kotlin 2.0 metadata under KSP ("unexpected jvm signature V");
+# 2.7+ is the Kotlin 2.0/KSP2-ready line.
+room = "2.7.2"
 serialization = "1.6.3"
 slf4j = "2.0.13"
 sshj = "0.40.0"
