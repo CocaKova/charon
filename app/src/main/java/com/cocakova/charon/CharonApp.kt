@@ -2,6 +2,7 @@ package com.cocakova.charon
 
 import android.app.Application
 import com.cocakova.charon.data.db.CharonDb
+import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.ssh.SessionManager
@@ -19,6 +20,8 @@ class CharonApp : Application() {
         private set
     lateinit var sessionManager: SessionManager
         private set
+    lateinit var commandHistory: CommandHistory
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -27,7 +30,8 @@ class CharonApp : Application() {
         db = CharonDb.build(this)
         keyVault = KeyVault(db.identities())
         hostVault = HostVault(db.hosts(), keyVault)
-        sessionManager = SessionManager(this, db.hosts(), db.knownHosts())
+        commandHistory = CommandHistory(this)
+        sessionManager = SessionManager(this, db.hosts(), db.knownHosts(), commandHistory)
     }
 
     private fun installBouncyCastle() {

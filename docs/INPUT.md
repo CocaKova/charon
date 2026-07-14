@@ -91,6 +91,48 @@ timing has to live outside it).
 
 ---
 
+## 2b. Smart autofill — the suggestion strip
+
+`CommandSuggestions` in `TerminalScreen.kt`, driven by the `autocomplete/` engine
+(`Completer` + `Specs` + `RemoteContext`) and `CommandHistory`. A slim scrollable
+strip **above** the accessory row offering inline completions as you type —
+Termius-class autocomplete, in theme.
+
+Three blended sources, ranked in this order:
+
+1. **Your history** (`CommandHistory`, prefs `charon_history`, cap 300, deduped) —
+   full past lines that continue the draft; the most personal signal, first.
+2. **Command grammar** (`Specs`) — curated specs for the tools a homelab hand
+   actually types (tmux, git, docker, systemctl, journalctl, apt, ssh…):
+   subcommands, common flags, and *which* flag/positional takes which dynamic value.
+3. **The live host** (`RemoteContext`) — probed over a **silent exec channel** on the
+   session's own transport (`SshConnection.exec`, never through the PTY): every
+   executable on PATH (`compgen -c`, `ls $bindirs` fallback; refreshed each
+   crossing), plus on-demand values with a 15 s TTL — running tmux sessions,
+   `docker ps` names, systemd units. So `tm` offers `tmux` because the host *has*
+   it, and `tmux attach -t ` offers the sessions running *right now*. Probes are
+   best-effort with timeouts; a missing tool = an empty list, never an error.
+
+The flow: `tm` → `tmux` → (space cascades) `attach` `new` `ls`… → `-t` → your
+actual session names. `sudo` is transparent — what follows completes as a fresh
+command.
+
+- **How it knows the line** — `TerminalSession.trackInput` reconstructs the command
+  being typed from the *outgoing* bytes (fed only from genuine user input: `emit`
+  and `paste`, never DA/DSR/mouse replies). Printables append; `^?`/`^H` pop; `^C`
+  `^U` reset; `^W` deletes a word; `\r`/`\n` commits the line to history. The moment
+  editing goes non-linear — any arrow/edit escape or a `\t` completion — the tracker
+  stops trusting its reconstruction and blanks the draft, so it never suggests
+  against a wrong prefix.
+- **The offer** — up to six chips: a gold `»`, the part you typed dimmed, the
+  completion glowing teal.
+- **Accepting** — a tap types *only the missing tail* (token completions add the
+  trailing space, which immediately surfaces the next word's suggestions). No
+  injection of whole lines; the remote echoes everything in place.
+- **Privacy** — passwords never land here: history records only on Enter at a shell
+  prompt, and password prompts don't echo back into the tracker. Probes send fixed
+  read-only commands; nothing typed is ever executed by the engine.
+
 ## 3. Gestures on the grid
 
 `TerminalView` routes a single finger by mode. `session.mouseActive` is true when

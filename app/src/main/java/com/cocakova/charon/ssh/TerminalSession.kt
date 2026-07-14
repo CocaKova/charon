@@ -5,6 +5,7 @@ import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.terminal.input.MouseEncoder
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.UUID
 
 /**
@@ -96,6 +97,77 @@ class TerminalSession(
         onOutput?.invoke(text.toByteArray(Charsets.UTF_8))
     }
 
+    // ---- Command-line tracking (smart autofill) ------------------------------------
+    // We reconstruct the line being typed from the bytes the user sends, so the
+    // suggestion strip can offer past commands that continue it. This is fed only by
+    // genuine user input ([trackInput] from the UI + [paste]) — never by DA/DSR/mouse
+    // replies, which would otherwise poison it with escape sequences.
+
+    private val lineBuf = StringBuilder()
+    /** False once editing goes non-linear (arrows, tab-complete): we stop trusting our
+     *  reconstruction and blank the draft rather than suggest against a wrong prefix. */
+    private var lineTrusted = true
+
+    private val _commandDraft = MutableStateFlow("")
+    /** The command currently on the line, or "" when empty/unknown. */
+    val commandDraft: StateFlow<String> = _commandDraft
+
+    /** Fired with a finished line when the user presses Enter at a prompt. */
+    var onCommandSubmitted: ((String) -> Unit)? = null
+
+    /** Feed user-originated bytes through the line reconstructor. */
+    fun trackInput(sent: String) {
+        var i = 0
+        while (i < sent.length) {
+            val c = sent[i]
+            when {
+                c == '\r' || c == '\n' -> { commitLine(); i++ }
+                c == '\u0003' || c == '\u0015' -> { resetLine(); i++ }   // ^C, ^U
+                c == '\u0017' -> { deleteWord(); i++ }                    // ^W
+                c == '\u007f' || c == '\b' -> {
+                    if (lineBuf.isNotEmpty()) lineBuf.deleteCharAt(lineBuf.length - 1)
+                    i++
+                }
+                c == '\u001b' -> { lineTrusted = false; i = skipEscape(sent, i) } // arrows/edits
+                c == '\t' -> { lineTrusted = false; i++ }                 // remote completion
+                c.code < 0x20 -> i++                                      // other controls: skip
+                else -> { if (lineTrusted) lineBuf.append(c); i++ }
+            }
+        }
+        _commandDraft.value = if (lineTrusted) lineBuf.toString() else ""
+    }
+
+    private fun commitLine() {
+        if (lineTrusted) {
+            val cmd = lineBuf.toString().trim()
+            if (cmd.isNotEmpty()) onCommandSubmitted?.invoke(cmd)
+        }
+        resetLine()
+    }
+
+    private fun resetLine() {
+        lineBuf.setLength(0)
+        lineTrusted = true
+    }
+
+    private fun deleteWord() {
+        while (lineBuf.isNotEmpty() && lineBuf.last() == ' ') lineBuf.deleteCharAt(lineBuf.length - 1)
+        while (lineBuf.isNotEmpty() && lineBuf.last() != ' ') lineBuf.deleteCharAt(lineBuf.length - 1)
+    }
+
+    /** Advance past an escape sequence starting at [start] (points at ESC). */
+    private fun skipEscape(s: String, start: Int): Int {
+        var i = start + 1
+        if (i < s.length && (s[i] == '[' || s[i] == 'O')) {   // CSI / SS3: run to a final byte
+            i++
+            while (i < s.length && s[i].code !in 0x40..0x7e) i++
+            if (i < s.length) i++
+        } else if (i < s.length) {
+            i++   // ESC + single char (Meta-key)
+        }
+        return i
+    }
+
     // ---- Selection (visible grid; scrollback selection is a later cut) -------------
 
     data class Selection(val anchor: TextSelection.Cell, val focus: TextSelection.Cell)
@@ -140,6 +212,7 @@ class TerminalSession(
     /** Paste text to the remote, bracketed-guarded when the app asked for it. */
     fun paste(text: String) {
         if (text.isEmpty()) return
+        trackInput(text) // pasted text counts toward the current command line
         val wrapped = synchronized(lock) { KeyEncoder.paste(text, term.bracketedPaste) }
         sendText(wrapped)
     }

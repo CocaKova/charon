@@ -66,6 +66,16 @@ wears **one thin band of instrument panel** and otherwise gets out of the way:
   long-press latches. Long-press variants (tab→back-tab, symbols→shifted mates),
   auto-repeat arrows, and a gold **Fn** page (F1–F12) all ship in v0.4. Full model in
   `docs/INPUT.md`.
+- **Smart autofill** (v0.5.2–3): a slim strip above the accessory row offers inline
+  completions — your history, command grammar (tmux/git/docker/systemctl…), and the
+  **live host** (installed commands, running tmux sessions, containers — probed over a
+  silent exec channel). Chips: gold `»`, typed part dimmed, completion glowing teal; a
+  tap types only the missing tail, cascading into the next word's offers. Mechanism in
+  `docs/INPUT.md §2b`.
+- **The grid breathes**: a touch of line leading (glyphs re-centred in the taller cell)
+  and a slim gutter keep text off the screen's corners — legible, not cramped, without
+  reading childish. Default 14 sp, pinch-zoom 8–32 sp persisted. The soft keyboard drops
+  the instant a crossing ends or you step back to the Dock.
 - **Touch is expressive, in theme**: selection washes StyxTeal with a teal **copy**
   pill; scrolled-back history shows a gold **▼ live** pill (the mouse-app wheel and the
   scrollback share one drag). Gesture/selection/mouse model: `docs/INPUT.md`.
