@@ -2,6 +2,7 @@ package com.cocakova.charon.ssh
 
 import android.content.Context
 import com.cocakova.charon.service.ConnectionService
+import com.cocakova.charon.theme.TerminalSchemes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +29,13 @@ class SessionManager(
     private var connection: SshConnection? = null
 
     fun connect(config: ConnectConfig) {
-        val session = TerminalSession(label = "${config.username}@${config.host}")
+        val scheme = TerminalSchemes.STYX
+        val session = TerminalSession(
+            label = "${config.username}@${config.host}",
+            basePalette = scheme.ansi16,
+            initialFg = scheme.fg,
+            initialBg = scheme.bg,
+        )
         lastError.value = null
         activeSession.value = session
         scope.launch {

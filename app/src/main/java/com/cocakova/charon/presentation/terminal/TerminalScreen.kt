@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.terminal
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -28,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +42,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.ssh.TerminalSession
@@ -59,6 +62,19 @@ fun TerminalScreen(
     var ctrlArmed by remember { mutableStateOf(false) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
     val inputFocus = remember { FocusRequester() }
+    val prefs = LocalContext.current.getSharedPreferences("charon", Context.MODE_PRIVATE)
+    var inputMode by remember {
+        mutableStateOf(
+            if (prefs.getString("input_mode", "predictive") == "raw") TerminalInputView.Mode.RAW
+            else TerminalInputView.Mode.PREDICTIVE,
+        )
+    }
+    LaunchedEffect(inputMode) {
+        inputView?.mode = inputMode
+        prefs.edit()
+            .putString("input_mode", if (inputMode == TerminalInputView.Mode.RAW) "raw" else "predictive")
+            .apply()
+    }
 
     // Sticky one-shot Ctrl applies to whatever text comes next (IME or accessory).
     fun sendText(text: String) {
@@ -87,6 +103,7 @@ fun TerminalScreen(
                     TerminalInputView(ctx).apply {
                         onInput = { sendText(it) }
                         appCursorKeys = { session.term.cursorKeysApp }
+                        mode = inputMode
                     }.also { inputView = it }
                 },
                 modifier = Modifier.fillMaxSize().focusRequester(inputFocus),
@@ -134,6 +151,14 @@ fun TerminalScreen(
                 session.sendText(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp))
             },
             onText = { sendText(it) },
+            rawInput = inputMode == TerminalInputView.Mode.RAW,
+            onToggleInputMode = {
+                inputMode = if (inputMode == TerminalInputView.Mode.RAW) {
+                    TerminalInputView.Mode.PREDICTIVE
+                } else {
+                    TerminalInputView.Mode.RAW
+                }
+            },
         )
     }
 }

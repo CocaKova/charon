@@ -13,6 +13,9 @@ class TerminalSession(
     val label: String,
     cols: Int = 80,
     rows: Int = 24,
+    basePalette: IntArray? = null,
+    initialFg: Int = 0xE6EDF3,
+    initialBg: Int = 0x000000,
 ) {
     val id: String = UUID.randomUUID().toString()
 
@@ -40,6 +43,9 @@ class TerminalSession(
         cols, rows,
         onResponse = { sendText(it) }, // DA/DSR/CPR replies go straight back out
         onBell = {},
+        basePalette = basePalette,
+        initialFg = initialFg,
+        initialBg = initialBg,
     )
 
     fun feedRemote(bytes: ByteArray, offset: Int, length: Int) {

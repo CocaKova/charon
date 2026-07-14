@@ -1,10 +1,15 @@
 package com.cocakova.charon.terminal
 
 /**
- * The 256-color palette (xterm defaults): 16 ANSI + 6x6x6 cube + 24 grays.
- * Mutable because OSC 4 can redefine entries; OSC 104 resets.
+ * The 256-color palette: 16 ANSI + 6x6x6 cube + 24 grays. The base 16 can be
+ * re-themed per scheme ([base16]); the cube and grays stay canonical — programs
+ * compute indexes into them expecting xterm values. Mutable because OSC 4 can
+ * redefine entries; OSC 104 resets — to the scheme, not to stock xterm.
  */
-class Palette {
+class Palette(base16: IntArray? = null) {
+    private val base = DEFAULTS.copyOf().also { b ->
+        base16?.copyInto(b, 0, 0, minOf(base16.size, 16))
+    }
     private val colors = IntArray(256)
 
     init {
@@ -18,11 +23,11 @@ class Palette {
     }
 
     fun reset() {
-        DEFAULTS.copyInto(colors)
+        base.copyInto(colors)
     }
 
     fun resetEntry(index: Int) {
-        colors[index and 0xFF] = DEFAULTS[index and 0xFF]
+        colors[index and 0xFF] = base[index and 0xFF]
     }
 
     companion object {
