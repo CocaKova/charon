@@ -134,6 +134,7 @@ private fun CharonRoot(
                 sessions = sessions,
                 onSwitch = { sessionManager.switchTo(it) },
                 onClose = { sessionManager.close(it) },
+                onReconnect = { sessionManager.forceReconnect(it) },
                 onNewSession = { sessionManager.showDock() },
             )
         } else {

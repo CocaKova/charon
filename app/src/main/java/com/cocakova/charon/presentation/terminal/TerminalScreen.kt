@@ -2,15 +2,18 @@ package com.cocakova.charon.presentation.terminal
 
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,7 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,8 +59,10 @@ import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
+import com.cocakova.charon.theme.StyxBlack
 import com.cocakova.charon.theme.StyxTeal
 import com.cocakova.charon.theme.WarnEmber
+import kotlinx.coroutines.delay
 
 @Composable
 fun TerminalScreen(
@@ -63,6 +70,7 @@ fun TerminalScreen(
     sessions: List<TerminalSession>,
     onSwitch: (String) -> Unit,
     onClose: (String) -> Unit,
+    onReconnect: (String) -> Unit,
     onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -194,40 +202,27 @@ fun TerminalScreen(
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
-            if (state is TerminalSession.State.Connecting) {
-                Text(
-                    "crossing the Styx…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 16.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
-                )
-            }
-            if (state is TerminalSession.State.Disconnected) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        "returned to shore",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        (state as TerminalSession.State.Disconnected).reason,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
-                    )
-                    Button(onClick = { onClose(session.id) }) { Text("close") }
-                }
+            when (val s = state) {
+                is TerminalSession.State.Connecting -> ConnectingPill("crossing the Styx…")
+                is TerminalSession.State.Reconnecting ->
+                    ReconnectingOverlay(attempt = s.attempt, onGiveUp = { onClose(session.id) })
+                is TerminalSession.State.Disconnected ->
+                    if (s.clean) {
+                        // You stepped off the ferry — a quick flourish, then the Dock
+                        // (where the ferry docks). Auto-dismiss, no tap needed.
+                        ReturnedToShoreFlourish()
+                        LaunchedEffect(session.id) {
+                            delay(900)
+                            onClose(session.id)
+                        }
+                    } else {
+                        CrossingFailedOverlay(
+                            reason = s.reason,
+                            onRecross = { onReconnect(session.id) },
+                            onClose = { onClose(session.id) },
+                        )
+                    }
+                else -> {}
             }
         }
         AccessoryRow(
@@ -322,6 +317,7 @@ private fun SessionTab(
         targetValue = when (state) {
             is TerminalSession.State.Connected -> StyxTeal
             is TerminalSession.State.Connecting -> ObolGold
+            is TerminalSession.State.Reconnecting -> ObolGold
             is TerminalSession.State.Disconnected -> WarnEmber
         },
         animationSpec = tween(400),
@@ -336,7 +332,11 @@ private fun SessionTab(
         ),
         label = "breatheAlpha",
     )
-    val dotAlpha = if (state is TerminalSession.State.Connected) breathe else 1f
+    // Breathe while connected; pulse while redialing — anything settled holds steady.
+    val dotAlpha = when (state) {
+        is TerminalSession.State.Connected, is TerminalSession.State.Reconnecting -> breathe
+        else -> 1f
+    }
 
     Row(
         modifier = Modifier
@@ -374,6 +374,153 @@ private fun SessionTab(
                 "×",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MistGrey,
+            )
+        }
+    }
+}
+
+// ---- Session-state overlays -------------------------------------------------------
+
+/** A slim bottom pill for the "crossing the Styx…" cold-connect beat. */
+@Composable
+private fun ConnectingPill(text: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(bottom = 16.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 18.dp, vertical = 8.dp),
+        )
+    }
+}
+
+/**
+ * A transport drop, redialing: a dimming scrim, a pulsing gold lantern, the attempt
+ * count, and a way out. The ferry turns back into the mist rather than beaching.
+ */
+@Composable
+private fun ReconnectingOverlay(attempt: Int, onGiveUp: () -> Unit) {
+    val pulse by rememberInfiniteTransition(label = "recross").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(760, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "recrossPulse",
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(StyxBlack.copy(alpha = 0.82f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .graphicsLayer { alpha = pulse }
+                    .clip(CircleShape)
+                    .background(ObolGold),
+            )
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "re-crossing the Styx…",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                "attempt $attempt",
+                style = MaterialTheme.typography.bodySmall,
+                color = MistGrey,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onGiveUp) { Text("give up", color = MistGrey) }
+        }
+    }
+}
+
+/** Hard end (no redial): the crossing failed. Cross again, or let it go. */
+@Composable
+private fun CrossingFailedOverlay(
+    reason: String,
+    onRecross: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(StyxBlack.copy(alpha = 0.82f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                "the crossing failed",
+                style = MaterialTheme.typography.titleLarge,
+                color = WarnEmber,
+            )
+            Text(
+                reason,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onRecross) { Text("cross again") }
+                OutlinedButton(onClick = onClose) { Text("close") }
+            }
+        }
+    }
+}
+
+/**
+ * The clean exit — you stepped off the ferry. A quick themed flourish: the wordmark
+ * fades up, a gold waterline sweeps across, then the whole screen hands off to the
+ * Dock (where the ferry docks). Auto-dismissed by the caller; no tap.
+ */
+@Composable
+private fun ReturnedToShoreFlourish() {
+    var appeared by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { appeared = true }
+    val sweep by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(560, easing = FastOutSlowInEasing),
+        label = "shoreSweep",
+    )
+    val fade by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(280),
+        label = "shoreFade",
+    )
+    Box(
+        modifier = Modifier.fillMaxSize().background(StyxBlack),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "returned to shore",
+                style = MaterialTheme.typography.titleLarge,
+                color = StyxTeal,
+                modifier = Modifier.graphicsLayer { alpha = fade },
+            )
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .height(2.dp)
+                    .width((168 * sweep).dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(ObolGold),
             )
         }
     }

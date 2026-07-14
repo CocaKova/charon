@@ -86,11 +86,16 @@ class SessionManager(
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             managed.values.forEach { ms ->
-                if (!ms.closed && ms.config.autoReconnect && ms.everConnected &&
-                    ms.session.state.value is TerminalSession.State.Disconnected
-                ) {
+                // A session mid-redial (or one that dropped hard) gets its backoff cut
+                // short the instant the network returns — the airplane-mode gate.
+                val st = ms.session.state.value
+                val down = st is TerminalSession.State.Reconnecting ||
+                    (st is TerminalSession.State.Disconnected && !st.clean)
+                if (!ms.closed && ms.config.autoReconnect && ms.everConnected && down) {
+                    ms.reconnectJob?.cancel()
                     ms.retries = 0
-                    reconnectNow(ms)
+                    ms.session.state.value = TerminalSession.State.Reconnecting(1)
+                    launchConnect(ms, firstAttempt = false)
                 }
             }
         }
@@ -148,10 +153,22 @@ class SessionManager(
         managed.keys.toList().forEach { close(it) }
     }
 
+    /** Manual re-cross from the "the crossing failed" overlay — ignores backoff. */
+    fun forceReconnect(id: String) {
+        val ms = managed[id] ?: return
+        if (ms.closed) return
+        ms.reconnectJob?.cancel()
+        ms.retries = 0
+        ms.session.state.value = TerminalSession.State.Reconnecting(1)
+        launchConnect(ms, firstAttempt = false)
+    }
+
     // ---- connect / reconnect plumbing ---------------------------------------------
 
     private fun launchConnect(ms: Managed, firstAttempt: Boolean) {
-        ms.session.state.value = TerminalSession.State.Connecting
+        // A redial is already wearing the Reconnecting state; only a cold connect
+        // announces Connecting (the "crossing the Styx…" beat).
+        if (firstAttempt) ms.session.state.value = TerminalSession.State.Connecting
         scope.launch {
             try {
                 ms.connection = engine.connectShell(ms.config, ms.session, verifier)
@@ -159,9 +176,9 @@ class SessionManager(
                 updateService()
             } catch (e: Exception) {
                 if (firstAttempt) lastError.value = e.message ?: e.javaClass.simpleName
-                // Flip to Disconnected so the watcher decides on a redial.
+                // A failed connect is never a clean end — the watcher decides on a redial.
                 ms.session.state.value =
-                    TerminalSession.State.Disconnected(e.message ?: "connect failed")
+                    TerminalSession.State.Disconnected(e.message ?: "connect failed", clean = false)
             }
         }
     }
@@ -176,8 +193,12 @@ class SessionManager(
                         ms.everConnected = true
                     }
                     is TerminalSession.State.Disconnected ->
-                        if (!ms.closed && ms.config.autoReconnect && ms.everConnected) {
-                            scheduleReconnect(ms)
+                        // Redial only a true drop of an established crossing — never a
+                        // clean `exit`, never a never-connected first attempt.
+                        if (!ms.closed && !state.clean &&
+                            ms.config.autoReconnect && ms.everConnected
+                        ) {
+                            beginReconnect(ms)
                         }
                     else -> {}
                 }
@@ -186,22 +207,18 @@ class SessionManager(
         }
     }
 
-    private fun scheduleReconnect(ms: Managed) {
+    private fun beginReconnect(ms: Managed) {
         if (ms.closed) return
         if (ms.reconnectJob?.isActive == true) return
+        ms.session.state.value = TerminalSession.State.Reconnecting(ms.retries + 1)
         ms.reconnectJob = scope.launch {
             // 1s, 2s, 4s … capped at 120s. The network callback can pre-empt this.
             val backoff = (1_000L shl ms.retries.coerceAtMost(7)).coerceAtMost(120_000L)
             delay(backoff)
             ms.retries++
-            reconnectNow(ms)
+            ms.session.state.value = TerminalSession.State.Reconnecting(ms.retries)
+            launchConnect(ms, firstAttempt = false)
         }
-    }
-
-    private fun reconnectNow(ms: Managed) {
-        if (ms.closed) return
-        ms.reconnectJob?.cancel()
-        launchConnect(ms, firstAttempt = false)
     }
 
     /** Carry a public key to a host using its current password authentication. */
