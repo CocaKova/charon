@@ -48,7 +48,7 @@ import com.cocakova.charon.terminal.TextSelection
 fun TerminalView(
     session: TerminalSession,
     modifier: Modifier = Modifier,
-    fontSizeSp: Float = 13f,
+    fontSizeSp: Float = 14f,
     onRequestFocus: () -> Unit = {},
     onZoom: (Float) -> Unit = {},
 ) {
@@ -93,15 +93,17 @@ fun TerminalView(
     LaunchedEffect(session, paints) {
         snapshotFlow { pendingSize }.filterNotNull().collectLatest { size ->
             delay(120)
-            val cols = (size.width / paints.cellWidth).toInt().coerceAtLeast(4)
-            val rows = (size.height / paints.cellHeight).toInt().coerceAtLeast(2)
+            val cols = ((size.width - 2 * paints.padX) / paints.cellWidth).toInt().coerceAtLeast(4)
+            val rows = ((size.height - 2 * paints.padY) / paints.cellHeight).toInt().coerceAtLeast(2)
             session.resize(cols, rows, paints.cellWidth.toInt(), paints.cellHeight.toInt())
         }
     }
 
     fun cellOf(pos: Offset): TextSelection.Cell {
-        val col = (pos.x / paints.cellWidth).toInt().coerceIn(0, (session.term.cols - 1).coerceAtLeast(0))
-        val row = (pos.y / paints.cellHeight).toInt().coerceIn(0, (session.term.rows - 1).coerceAtLeast(0))
+        val col = ((pos.x - paints.padX) / paints.cellWidth).toInt()
+            .coerceIn(0, (session.term.cols - 1).coerceAtLeast(0))
+        val row = ((pos.y - paints.padY) / paints.cellHeight).toInt()
+            .coerceIn(0, (session.term.rows - 1).coerceAtLeast(0))
         return TextSelection.Cell(row, col)
     }
 
@@ -114,15 +116,20 @@ fun TerminalView(
                     if (zoom != 1f) onZoom(zoom)
                 }
             }
-            // Tap: clear an active selection, else send a mouse click (mouse apps),
-            // else focus the input and raise the keyboard.
+            // Tap: clear an active selection; in a mouse app send the click AND make
+            // sure the keyboard is up (tmux-with-mouse used to swallow every tap, so
+            // the keyboard could never be raised — showSoftInput is a no-op when it
+            // already shows); otherwise just focus and raise.
             .pointerInput(session, paints) {
                 detectTapGestures(
                     onLongPress = { pos -> session.selectWordAt(cellOf(pos)) },
                     onTap = { pos ->
                         when {
                             session.selection.value != null -> session.clearSelection()
-                            session.mouseActive -> session.mouseClick(cellOf(pos))
+                            session.mouseActive -> {
+                                session.mouseClick(cellOf(pos))
+                                onRequestFocus()
+                            }
                             else -> onRequestFocus()
                         }
                     },
@@ -199,12 +206,23 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
         typeface = regular
         textSize = textSizePx
         isAntiAlias = true
+        // Subpixel + hinting: mono glyphs stay crisp and evenly weighted at small sizes.
+        isSubpixelText = true
+        hinting = Paint.HINTING_ON
     }
     val fill = Paint()
     val cellWidth = text.measureText("M")
     private val fm = text.fontMetrics
-    val cellHeight = fm.descent - fm.ascent
-    val baselineOffset = -fm.ascent
+    private val glyphHeight = fm.descent - fm.ascent
+    // A touch of leading so rows breathe: tight mono reads cramped on a phone. The
+    // glyph is re-centered in the taller cell so the extra space splits above/below.
+    val cellHeight = glyphHeight * LINE_SPACING
+    val baselineOffset = -fm.ascent + (cellHeight - glyphHeight) / 2f
+    // A slim gutter so the grid isn't jammed into the screen's corner.
+    val padX = cellWidth * 0.5f
+    val padY = cellHeight * 0.30f
+
+    private companion object { const val LINE_SPACING = 1.16f }
 }
 
 private fun drawTerminal(
@@ -222,6 +240,10 @@ private fun drawTerminal(
 
     p.fill.color = opaque(defaultBg)
     canvas.drawRect(0f, 0f, width, height, p.fill)
+
+    // Everything from here draws in grid space, offset into the gutter.
+    canvas.save()
+    canvas.translate(p.padX, p.padY)
 
     val cw = p.cellWidth
     val ch = p.cellHeight
@@ -315,6 +337,8 @@ private fun drawTerminal(
         }
         p.fill.alpha = 255
     }
+
+    canvas.restore()
 }
 
 /** Wash the selected cells teal, computing each row's span like the copy does. */

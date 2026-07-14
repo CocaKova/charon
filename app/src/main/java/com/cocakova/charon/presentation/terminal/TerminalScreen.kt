@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,10 +54,20 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.cocakova.charon.autocomplete.Completer
+import com.cocakova.charon.autocomplete.RemoteContext
+import com.cocakova.charon.autocomplete.Suggestion
+import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.input.KeyEncoder
+import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
 import com.cocakova.charon.theme.StyxBlack
@@ -68,6 +79,8 @@ import kotlinx.coroutines.delay
 fun TerminalScreen(
     session: TerminalSession,
     sessions: List<TerminalSession>,
+    commandHistory: CommandHistory,
+    remoteContext: RemoteContext?,
     onSwitch: (String) -> Unit,
     onClose: (String) -> Unit,
     onReconnect: (String) -> Unit,
@@ -84,7 +97,7 @@ fun TerminalScreen(
     val inputFocus = remember { FocusRequester() }
     val prefs = LocalContext.current.getSharedPreferences("charon", Context.MODE_PRIVATE)
     // Pinch-zoomable font size, persisted; clamped to a legible band.
-    var fontSizeSp by remember { mutableFloatStateOf(prefs.getFloat("font_size", 13f)) }
+    var fontSizeSp by remember { mutableFloatStateOf(prefs.getFloat("font_size", 14f)) }
     LaunchedEffect(fontSizeSp) { prefs.edit().putFloat("font_size", fontSizeSp).apply() }
     var inputMode by remember {
         mutableStateOf(
@@ -108,8 +121,29 @@ fun TerminalScreen(
         if (singleChar && ctrl != Sticky.OFF) out = KeyEncoder.ctrl(raw[0]) ?: raw
         if (alt != Sticky.OFF) out = KeyEncoder.alt(out)
         session.sendText(out)
+        session.trackInput(out) // feed the command-line reconstructor for autofill
         if (ctrl == Sticky.ARMED) ctrl = Sticky.OFF
         if (alt == Sticky.ARMED) alt = Sticky.OFF
+    }
+
+    // Drop the keyboard the moment the crossing ends (clean exit or a hard failure),
+    // and whenever we leave the terminal for the Dock — nothing left to type into.
+    LaunchedEffect(state) {
+        if (state is TerminalSession.State.Disconnected) inputView?.hideKeyboard()
+    }
+    DisposableEffect(Unit) {
+        onDispose { inputView?.hideKeyboard() }
+    }
+
+    // Smart autofill: history + command grammar + live host context (installed
+    // commands, running tmux sessions…). ctxVersion ticks when a probe lands, so
+    // suggestions refresh the moment the host answers.
+    val draft by session.commandDraft.collectAsState()
+    val history by commandHistory.entries.collectAsState()
+    val ctxVersion by (remoteContext?.version ?: remember { kotlinx.coroutines.flow.MutableStateFlow(0) })
+        .collectAsState()
+    val suggestions = remember(draft, history, ctxVersion) {
+        Completer.complete(draft, history, remoteContext)
     }
 
     // Cycle a modifier: tap toggles off<->armed (a lock is cleared by a tap too).
@@ -224,6 +258,20 @@ fun TerminalScreen(
                     }
                 else -> {}
             }
+        }
+        // Smart autofill: tapping a chip types only the missing tail — our tracker
+        // knows exactly what's already on the line, so the remote echoes it in place.
+        // A token completion carries a trailing space, which cascades straight into
+        // the next word's suggestions (tmux → attach → -t → the live session names).
+        if (suggestions.isNotEmpty()) {
+            CommandSuggestions(
+                suggestions = suggestions,
+                onAccept = { s ->
+                    session.scrollToBottom()
+                    session.sendText(s.insert)
+                    session.trackInput(s.insert)
+                },
+            )
         }
         AccessoryRow(
             ctrl = ctrl,
@@ -376,6 +424,55 @@ private fun SessionTab(
                 color = MistGrey,
             )
         }
+    }
+}
+
+/**
+ * The smart-autofill strip: a scrollable row of inline completions — history lines,
+ * subcommands/flags from the command grammar, and live host values (running tmux
+ * sessions, containers). Sits just above the accessory row so a completion is a
+ * thumb-tap from the keys. The typed part shows dim; the completion glows teal.
+ */
+@Composable
+private fun CommandSuggestions(
+    suggestions: List<Suggestion>,
+    onAccept: (Suggestion) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        suggestions.forEach { s ->
+            SuggestionChipPill(suggestion = s, onClick = { onAccept(s) })
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+}
+
+/** One autofill offer: a » sigil, the already-typed part dimmed, the rest in teal. */
+@Composable
+private fun SuggestionChipPill(suggestion: Suggestion, onClick: () -> Unit) {
+    val label = buildAnnotatedString {
+        withStyle(SpanStyle(color = MistGrey)) { append(suggestion.display.take(suggestion.matched)) }
+        withStyle(SpanStyle(color = StyxTeal, fontWeight = FontWeight.Medium)) {
+            append(suggestion.display.substring(suggestion.matched))
+        }
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("»", fontFamily = CharonMono, fontSize = 13.sp, color = ObolGold)
+        Spacer(Modifier.width(8.dp))
+        Text(text = label, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
     }
 }
 

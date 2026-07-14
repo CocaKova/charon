@@ -24,6 +24,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.db.IdentityEntity
+import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.presentation.dock.DockScreen
@@ -47,7 +48,7 @@ class MainActivity : FragmentActivity() {
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, app)
         setContent {
             CharonTheme {
-                CharonRoot(app.sessionManager, app.hostVault, app.keyVault)
+                CharonRoot(app.sessionManager, app.hostVault, app.keyVault, app.commandHistory)
             }
         }
     }
@@ -96,6 +97,7 @@ private fun CharonRoot(
     sessionManager: SessionManager,
     hostVault: HostVault,
     keyVault: KeyVault,
+    commandHistory: CommandHistory,
 ) {
     val active by sessionManager.activeSession.collectAsState()
     val sessions by sessionManager.sessions.collectAsState()
@@ -132,6 +134,8 @@ private fun CharonRoot(
             TerminalScreen(
                 session = current,
                 sessions = sessions,
+                commandHistory = commandHistory,
+                remoteContext = sessionManager.contextFor(current.id),
                 onSwitch = { sessionManager.switchTo(it) },
                 onClose = { sessionManager.close(it) },
                 onReconnect = { sessionManager.forceReconnect(it) },

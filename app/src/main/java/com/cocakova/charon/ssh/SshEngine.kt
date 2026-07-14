@@ -29,6 +29,14 @@ interface SshEngine {
 interface SshConnection {
     val isConnected: Boolean
     fun disconnect()
+
+    /**
+     * Run [command] silently on a fresh exec channel over the live transport and
+     * return its stdout, or null on any failure/timeout. Nothing touches the user's
+     * shell or PTY — this is the probe the smart-autofill context is built from
+     * (installed commands, running tmux sessions…). Blocking; call off-main.
+     */
+    fun exec(command: String, timeoutSeconds: Int = 5): String?
 }
 
 data class ConnectConfig(

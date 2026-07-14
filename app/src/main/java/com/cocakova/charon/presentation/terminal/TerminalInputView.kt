@@ -206,6 +206,13 @@ class TerminalInputView(context: Context) : View(context) {
         logInput { "showKeyboard: isFocused=$isFocused hasWindowFocus=${hasWindowFocus()}" }
     }
 
+    /** Drop the soft keyboard and focus — the ferry's ashore, nothing left to type. */
+    fun hideKeyboard() {
+        imm().hideSoftInputFromWindow(windowToken, 0)
+        clearFocus()
+        logInput { "hideKeyboard" }
+    }
+
     private fun imm(): InputMethodManager =
         context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
 

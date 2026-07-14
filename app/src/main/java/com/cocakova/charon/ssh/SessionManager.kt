@@ -3,8 +3,10 @@ package com.cocakova.charon.ssh
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.data.db.HostDao
 import com.cocakova.charon.data.db.KnownHostDao
+import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.service.ConnectionService
 import com.cocakova.charon.theme.TerminalSchemes
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,7 @@ class SessionManager(
     private val appContext: Context,
     private val hostDao: HostDao,
     knownHostDao: KnownHostDao,
+    private val commandHistory: CommandHistory,
     private val engine: SshEngine = SshjEngine(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,6 +54,8 @@ class SessionManager(
         @Volatile var everConnected: Boolean = false
         var watchJob: Job? = null
         var reconnectJob: Job? = null
+        /** Live host knowledge for smart autofill; probes ride this session's transport. */
+        var remote: RemoteContext? = null
     }
 
     private val managed = ConcurrentHashMap<String, Managed>()
@@ -109,7 +114,9 @@ class SessionManager(
             initialFg = scheme.fg,
             initialBg = scheme.bg,
         )
+        session.onCommandSubmitted = { commandHistory.record(it) }
         val ms = Managed(session, config, hostId)
+        ms.remote = RemoteContext(scope) { cmd -> ms.connection?.exec(cmd) }
         managed[session.id] = ms
         lastError.value = null
         sessions.update { it + session }
@@ -191,6 +198,9 @@ class SessionManager(
                     is TerminalSession.State.Connected -> {
                         ms.retries = 0
                         ms.everConnected = true
+                        // Inventory the host for autofill on every crossing (PATH can
+                        // change between redials; the probe is one cheap exec).
+                        ms.remote?.refreshCommands()
                     }
                     is TerminalSession.State.Disconnected ->
                         // Redial only a true drop of an established crossing — never a
@@ -229,6 +239,9 @@ class SessionManager(
     }
 
     // ---- helpers -------------------------------------------------------------------
+
+    /** The autofill host-context for a live session, or null once it's closed. */
+    fun contextFor(id: String): RemoteContext? = managed[id]?.remote
 
     private fun refreshActive() {
         activeSession.value = sessions.value.firstOrNull { it.id == activeId.value }

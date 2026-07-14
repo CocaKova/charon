@@ -145,6 +145,19 @@ class SshjEngine : SshEngine {
                     runCatching { sshSession.close() }
                     runCatching { client.close() }
                 }
+
+                override fun exec(command: String, timeoutSeconds: Int): String? = runCatching {
+                    // A sibling channel on the live transport: invisible to the PTY.
+                    val probe = client.startSession()
+                    try {
+                        val cmd = probe.exec(command)
+                        val out = cmd.inputStream.bufferedReader().readText()
+                        cmd.join(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+                        out
+                    } finally {
+                        runCatching { probe.close() }
+                    }
+                }.getOrNull()
             }
         } catch (e: Exception) {
             runCatching { client.close() }
