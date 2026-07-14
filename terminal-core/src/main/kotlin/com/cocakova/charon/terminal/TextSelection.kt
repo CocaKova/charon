@@ -1,33 +1,32 @@
 package com.cocakova.charon.terminal
 
 /**
- * Pulls plain text out of the visible grid for copy. Pure and testable — the UI
- * supplies a start and end cell (0-based, inclusive), any order. Soft-wrapped rows
- * are joined without a newline (so a wrapped command line copies as one line);
+ * Pulls plain text out of the grid for copy. Pure and testable — the UI supplies a
+ * start and end cell (inclusive, any order) in selection space: row 0..rows-1 is
+ * the live grid, negative rows reach into scrollback (see ScreenBuffer.relativeLine),
+ * so one selection can run from deep history down onto the live screen. Soft-wrapped
+ * rows are joined without a newline (so a wrapped command line copies as one line);
  * hard line breaks become '\n'. Per-row trailing spaces are trimmed, matching how
  * every terminal copies.
- *
- * Scrollback selection (negative rows) is a later cut; this handles the visible
- * screen, which is where selection starts.
  */
 object TextSelection {
 
     data class Cell(val row: Int, val col: Int)
 
-    fun extract(screen: ScreenBuffer, a: Cell, b: Cell, scrollOffset: Int = 0): String {
+    fun extract(screen: ScreenBuffer, a: Cell, b: Cell): String {
         val (start, end) = order(a, b)
-        val firstRow = start.row.coerceIn(0, screen.rows - 1)
-        val lastRow = end.row.coerceIn(0, screen.rows - 1)
+        val firstRow = start.row.coerceIn(-screen.scrollbackSize, screen.rows - 1)
+        val lastRow = end.row.coerceIn(-screen.scrollbackSize, screen.rows - 1)
 
         return buildString {
             for (row in firstRow..lastRow) {
-                val line = screen.viewLine(scrollOffset, row)
+                val line = screen.relativeLine(row)
                 val from = if (row == firstRow) start.col.coerceIn(0, screen.cols - 1) else 0
                 val to = if (row == lastRow) end.col.coerceIn(0, screen.cols - 1) else screen.cols - 1
                 append(rowText(line, from, to))
                 if (row != lastRow) {
                     // A newline only where the next row is NOT a soft-wrap continuation.
-                    if (!screen.viewLine(scrollOffset, row + 1).isWrapped) append('\n')
+                    if (!screen.relativeLine(row + 1).isWrapped) append('\n')
                 }
             }
         }

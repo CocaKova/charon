@@ -182,6 +182,7 @@ private fun CharonRoot(
                 onClose = { sessionManager.close(it) },
                 onReconnect = { sessionManager.forceReconnect(it) },
                 onNewSession = { sessionManager.showDock() },
+                onDock = { sessionManager.showDock() },
                 onFiles = { filesFor = current.id },
                 onSaveSnippet = { s -> scope.launch { snippetDao.upsert(s) } },
                 onDeleteSnippet = { id -> scope.launch { snippetDao.delete(id) } },

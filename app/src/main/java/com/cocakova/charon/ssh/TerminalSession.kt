@@ -66,27 +66,44 @@ class TerminalSession(
         synchronized(lock) {
             val before = term.screen.scrollbackSize
             term.write(bytes, offset, length)
-            // While the user is scrolled up, grow the offset by however many lines
-            // were just evicted into scrollback so the viewport stays put instead of
-            // drifting under new output.
-            if (scrollOffset.value > 0) {
-                val grew = term.screen.scrollbackSize - before
-                if (grew > 0) {
+            // Crossing into or out of the alternate screen (tmux, vim, htop…) means
+            // whatever line we thought was being typed — and whatever was selected —
+            // belongs to a different world; reset both so stale text can't linger.
+            if (term.usingAlt != wasAltScreen) {
+                wasAltScreen = term.usingAlt
+                resetLine()
+                _commandDraft.value = ""
+                selection.value = null
+            }
+            val grew = term.screen.scrollbackSize - before
+            if (grew > 0) {
+                // While the user is scrolled up, grow the offset by however many lines
+                // were just evicted into scrollback so the viewport stays put instead
+                // of drifting under new output.
+                if (scrollOffset.value > 0) {
                     scrollOffset.value =
                         (scrollOffset.value + grew).coerceAtMost(term.screen.scrollbackSize)
+                }
+                // The selection is pinned to its text, so it slides back with it; if
+                // the text it covered has been evicted past scrollback, let it go.
+                selection.value?.let { sel ->
+                    val anchor = sel.anchor.copy(row = sel.anchor.row - grew)
+                    val focus = sel.focus.copy(row = sel.focus.row - grew)
+                    val floor = -term.screen.scrollbackSize
+                    selection.value =
+                        if (anchor.row < floor && focus.row < floor) null
+                        else Selection(clampCell(anchor), clampCell(focus))
                 }
             }
         }
     }
 
-    /** Scroll the viewport by [deltaRows] (positive = toward older history). */
+    /** Scroll the viewport by [deltaRows] (positive = toward older history). The
+     *  selection survives — it lives in buffer space, not viewport space. */
     fun scrollBy(deltaRows: Int) {
         val max = synchronized(lock) { term.screen.scrollbackSize }
         val next = (scrollOffset.value + deltaRows).coerceIn(0, max)
-        if (next != scrollOffset.value) {
-            scrollOffset.value = next
-            clearSelection() // selection cells were pinned to the old viewport
-        }
+        if (next != scrollOffset.value) scrollOffset.value = next
     }
 
     fun scrollToBottom() {
@@ -104,6 +121,8 @@ class TerminalSession(
     // replies, which would otherwise poison it with escape sequences.
 
     private val lineBuf = StringBuilder()
+    /** Mirrors term.usingAlt so [feedRemote] can spot the screen switching. */
+    private var wasAltScreen = false
     /** False once editing goes non-linear (arrows, tab-complete): we stop trusting our
      *  reconstruction and blank the draft rather than suggest against a wrong prefix. */
     private var lineTrusted = true
@@ -168,31 +187,51 @@ class TerminalSession(
         return i
     }
 
-    // ---- Selection (visible grid; scrollback selection is a later cut) -------------
+    // ---- Selection (buffer space: negative rows reach into scrollback) --------------
 
     data class Selection(val anchor: TextSelection.Cell, val focus: TextSelection.Cell)
 
-    /** Live selection for the renderer to tint and the copy affordance to read. */
+    /** Live selection for the renderer to tint and the copy affordance to read.
+     *  Cells are in selection space (row 0 = top of the live grid, negative rows =
+     *  scrollback), so the selection stays glued to its text while the view scrolls. */
     val selection = MutableStateFlow<Selection?>(null)
 
     /** True while the remote app is tracking the mouse (any DECSET 9/1000/1002/1003). */
     val mouseActive: Boolean get() = synchronized(lock) { term.mouseMode != 0 }
 
+    private fun clampCell(cell: TextSelection.Cell): TextSelection.Cell =
+        TextSelection.Cell(
+            cell.row.coerceIn(-term.screen.scrollbackSize, term.rows - 1),
+            cell.col.coerceIn(0, (term.cols - 1).coerceAtLeast(0)),
+        )
+
     fun selectWordAt(cell: TextSelection.Cell) {
         selection.value = synchronized(lock) {
-            val row = cell.row.coerceIn(0, term.rows - 1)
-            val line = term.screen.viewLine(scrollOffset.value, row)
-            val range = TextSelection.wordAt(line, cell.col.coerceIn(0, term.cols - 1))
-            Selection(TextSelection.Cell(row, range.first), TextSelection.Cell(row, range.last))
+            val c = clampCell(cell)
+            val line = term.screen.relativeLine(c.row)
+            val range = TextSelection.wordAt(line, c.col)
+            Selection(TextSelection.Cell(c.row, range.first), TextSelection.Cell(c.row, range.last))
+        }
+    }
+
+    /** Select everything there is: the whole scrollback plus the live screen. */
+    fun selectAll() {
+        selection.value = synchronized(lock) {
+            Selection(
+                TextSelection.Cell(-term.screen.scrollbackSize, 0),
+                TextSelection.Cell(term.rows - 1, (term.cols - 1).coerceAtLeast(0)),
+            )
         }
     }
 
     fun startSelection(cell: TextSelection.Cell) {
-        selection.value = Selection(cell, cell)
+        val c = synchronized(lock) { clampCell(cell) }
+        selection.value = Selection(c, c)
     }
 
     fun extendSelection(focus: TextSelection.Cell) {
-        selection.value = selection.value?.copy(focus = focus)
+        val c = synchronized(lock) { clampCell(focus) }
+        selection.value = selection.value?.copy(focus = c)
     }
 
     fun clearSelection() {
@@ -203,7 +242,7 @@ class TerminalSession(
     fun copySelection(): String? {
         val sel = selection.value ?: return null
         return synchronized(lock) {
-            TextSelection.extract(term.screen, sel.anchor, sel.focus, scrollOffset.value)
+            TextSelection.extract(term.screen, sel.anchor, sel.focus)
         }
     }
 

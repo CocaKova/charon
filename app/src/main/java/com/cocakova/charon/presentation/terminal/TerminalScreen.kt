@@ -15,6 +15,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -36,7 +37,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -55,6 +55,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -67,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.autocomplete.Completer
 import com.cocakova.charon.autocomplete.RemoteContext
@@ -84,6 +87,7 @@ import com.cocakova.charon.theme.StyxBlack
 import com.cocakova.charon.theme.StyxTeal
 import com.cocakova.charon.theme.WarnEmber
 import kotlinx.coroutines.delay
+import kotlin.math.sin
 
 @Composable
 fun TerminalScreen(
@@ -100,6 +104,7 @@ fun TerminalScreen(
     onClose: (String) -> Unit,
     onReconnect: (String) -> Unit,
     onNewSession: () -> Unit,
+    onDock: () -> Unit,
     onFiles: () -> Unit,
     onSaveSnippet: (SnippetEntity) -> Unit,
     onDeleteSnippet: (String) -> Unit,
@@ -147,6 +152,13 @@ fun TerminalScreen(
         if (alt == Sticky.ARMED) alt = Sticky.OFF
     }
 
+    // A modifier armed on one ferry must not discharge into another: switching tabs
+    // clears the sticky state rather than carrying it silently across sessions.
+    LaunchedEffect(session.id) {
+        ctrl = Sticky.OFF
+        alt = Sticky.OFF
+    }
+
     // Drop the keyboard the moment the crossing ends (clean exit or a hard failure),
     // and whenever we leave the terminal for the Dock — nothing left to type into.
     LaunchedEffect(state) {
@@ -170,6 +182,10 @@ fun TerminalScreen(
     // Charted channels sheet, raised from the switcher's ⇆.
     var showForwards by remember { mutableStateOf(false) }
 
+    // The system back gesture steps ashore (the Dock) instead of killing the app;
+    // every crossing stays live in the background. The ⌂ in the switcher matches.
+    BackHandler { onDock() }
+
     // Cycle a modifier: tap toggles off<->armed (a lock is cleared by a tap too).
     fun tapMod(s: Sticky) = if (s == Sticky.OFF) Sticky.ARMED else Sticky.OFF
     // Long-press latches or releases the lock.
@@ -187,6 +203,7 @@ fun TerminalScreen(
             onSwitch = onSwitch,
             onClose = onClose,
             onNewSession = onNewSession,
+            onDock = onDock,
             onFiles = onFiles,
             onForwards = { showForwards = true },
         )
@@ -242,25 +259,40 @@ fun TerminalScreen(
                 )
             }
 
-            // Copy affordance: a teal pill that surfaces while a selection holds.
+            // Copy affordances while a selection holds: "all" swells the selection to
+            // the whole scrollback + screen, "copy" takes it to the clipboard.
             if (selection != null) {
-                Text(
-                    "copy",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(StyxTeal)
-                        .clickable {
-                            session.copySelection()?.let {
-                                clipboard.setText(AnnotatedString(it))
+                Row(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "all",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { session.selectAll() }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "copy",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.background,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(StyxTeal)
+                            .clickable {
+                                session.copySelection()?.let {
+                                    clipboard.setText(AnnotatedString(it))
+                                }
+                                session.clearSelection()
                             }
-                            session.clearSelection()
-                        }
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                )
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
             }
             // State overlays fade over the water instead of popping — keyed on the
             // kind of state (plus clean/dirty for disconnects) so an attempt counter
@@ -381,6 +413,7 @@ private fun SessionSwitcher(
     onSwitch: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewSession: () -> Unit,
+    onDock: () -> Unit,
     onFiles: () -> Unit,
     onForwards: () -> Unit,
 ) {
@@ -393,6 +426,20 @@ private fun SessionSwitcher(
                 .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Back to shore: the Dock, with every crossing left running at sea.
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDock)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    "⌂",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MistGrey,
+                )
+            }
+            Spacer(Modifier.width(4.dp))
             sessions.forEach { s ->
                 SessionTab(
                     session = s,
@@ -441,12 +488,45 @@ private fun SessionSwitcher(
                 )
             }
         }
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        )
+        Waterline()
     }
 }
+
+/**
+ * The waterline: where the tab row meets the water, a slow teal ripple stands in for
+ * the old hairline divider. Amplitude is under 2dp and the drift takes seven seconds
+ * — it reads as a plain rule until you look, which is the point.
+ */
+@Composable
+private fun Waterline() {
+    val phase by rememberInfiniteTransition(label = "waterline").animateFloat(
+        initialValue = 0f,
+        targetValue = TWO_PI,
+        animationSpec = infiniteRepeatable(
+            animation = tween(7000, easing = LinearEasing),
+        ),
+        label = "waterlinePhase",
+    )
+    val still = MaterialTheme.colorScheme.surfaceVariant
+    Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+        val mid = size.height / 2f
+        val amp = size.height * 0.32f
+        val wavelength = 26.dp.toPx()
+        val step = 3.dp.toPx()
+        val path = Path()
+        var x = 0f
+        path.moveTo(0f, mid + amp * sin(-phase))
+        while (x < size.width + step) {
+            path.lineTo(x, mid + amp * sin(x / wavelength * TWO_PI - phase))
+            x += step
+        }
+        // The still base keeps the rule legible; the teal ripple breathes over it.
+        drawPath(path, still, style = Stroke(width = 1.dp.toPx()))
+        drawPath(path, StyxTeal.copy(alpha = 0.30f), style = Stroke(width = 1.dp.toPx()))
+    }
+}
+
+private const val TWO_PI = (2 * Math.PI).toFloat()
 
 /** One ferry in the switcher: a breathing state dot, its label, and a close ×. */
 @Composable

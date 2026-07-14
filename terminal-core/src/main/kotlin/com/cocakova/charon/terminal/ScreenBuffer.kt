@@ -38,6 +38,15 @@ class ScreenBuffer(
     }
 
     /**
+     * The line at [row] in selection space, which is anchored to the live grid:
+     * 0..rows-1 is the grid itself, negative rows reach back into scrollback
+     * (-1 = the newest scrollback line, -scrollbackSize = the oldest). Selections
+     * live in this space so they stay glued to their text while the view scrolls.
+     */
+    fun relativeLine(row: Int): Line =
+        if (row >= 0) lines[row] else scrollback[scrollback.size + row]
+
+    /**
      * Scroll the region [top, bottom] (inclusive) up by [n]. When the region starts at
      * the top of a primary screen, evicted lines go to scrollback; otherwise they die.
      * Vacated lines at the bottom are cleared with [fillAttr].

@@ -64,15 +64,37 @@ class TextSelectionTest {
     }
 
     @Test
-    fun `selection reads scrollback when scrolled up`() {
+    fun `negative rows read scrollback`() {
         // 2-row grid: writing four lines pushes the first two into scrollback.
         val term = TerminalEmulator(10, 2)
         term.write("line1\r\nline2\r\nline3\r\nline4".toByteArray())
-        // Live view shows line3/line4; scroll up 2 to reach line1/line2.
+        // Selection space: -2/-1 are line1/line2 in scrollback.
         val out = TextSelection.extract(
-            term.screen, TextSelection.Cell(0, 0), TextSelection.Cell(1, 9), scrollOffset = 2,
+            term.screen, TextSelection.Cell(-2, 0), TextSelection.Cell(-1, 9),
         )
         assertEquals("line1\nline2", out)
+    }
+
+    @Test
+    fun `one selection spans scrollback and the live grid`() {
+        val term = TerminalEmulator(10, 2)
+        term.write("line1\r\nline2\r\nline3\r\nline4".toByteArray())
+        // From the oldest history line through the bottom of the live screen.
+        val out = TextSelection.extract(
+            term.screen, TextSelection.Cell(-2, 0), TextSelection.Cell(1, 9),
+        )
+        assertEquals("line1\nline2\nline3\nline4", out)
+    }
+
+    @Test
+    fun `rows clamp to what exists`() {
+        val term = TerminalEmulator(10, 2)
+        term.write("line1\r\nline2\r\nline3\r\nline4".toByteArray())
+        // Asking past both ends must not throw — it clamps to the full buffer.
+        val out = TextSelection.extract(
+            term.screen, TextSelection.Cell(-99, 0), TextSelection.Cell(99, 9),
+        )
+        assertEquals("line1\nline2\nline3\nline4", out)
     }
 
     @Test
