@@ -37,7 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -159,6 +161,7 @@ private fun StickyKey(
     onTap: () -> Unit,
     onLock: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     KeyPill(
         label = label,
         container = when (state) {
@@ -172,8 +175,18 @@ private fun StickyKey(
         modifier = Modifier.combinedClickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = ripple(color = StyxTeal),
-            onClick = onTap,
-            onLongClick = onLock,
+            onClick = {
+                // Arming reads as switching something on; clearing as off.
+                haptic.performHapticFeedback(
+                    if (state == Sticky.OFF) HapticFeedbackType.ToggleOn
+                    else HapticFeedbackType.ToggleOff,
+                )
+                onTap()
+            },
+            onLongClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onLock()
+            },
         ),
     )
 }
@@ -203,10 +216,14 @@ private fun AccessoryKey(
     // Repeatable keys drive the action from a LaunchedEffect keyed on a pressed flag
     // the gesture toggles — waitForUpOrCancellation lives in a restricted suspend
     // scope and can't be wrapped in withTimeout, so the timing lives outside it.
+    val haptic = LocalHapticFeedback.current
     var held by remember { mutableStateOf(false) }
     if (repeatable) {
         LaunchedEffect(held) {
             if (held) {
+                // One click on the down-stroke; the repeats run silent so a held
+                // arrow doesn't turn the phone into a buzzer.
+                haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                 onPress()
                 delay(400)
                 while (true) {
@@ -230,8 +247,16 @@ private fun AccessoryKey(
         combinedClickable(
             interactionSource = interaction,
             indication = ripple(color = StyxTeal),
-            onClick = onPress,
-            onLongClick = onLongPress,
+            onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                onPress()
+            },
+            onLongClick = onLongPress?.let {
+                {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    it()
+                }
+            },
         )
     }
 

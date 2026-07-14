@@ -1,6 +1,8 @@
 package com.cocakova.charon.presentation.terminal
 
 import android.content.Context
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -10,6 +12,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -51,8 +56,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -255,27 +262,45 @@ fun TerminalScreen(
                         .padding(horizontal = 20.dp, vertical = 8.dp),
                 )
             }
-            when (val s = state) {
-                is TerminalSession.State.Connecting -> ConnectingPill("crossing the Styx…")
-                is TerminalSession.State.Reconnecting ->
-                    ReconnectingOverlay(attempt = s.attempt, onGiveUp = { onClose(session.id) })
-                is TerminalSession.State.Disconnected ->
-                    if (s.clean) {
-                        // You stepped off the ferry — a quick flourish, then the Dock
-                        // (where the ferry docks). Auto-dismiss, no tap needed.
-                        ReturnedToShoreFlourish()
-                        LaunchedEffect(session.id) {
-                            delay(900)
-                            onClose(session.id)
-                        }
-                    } else {
-                        CrossingFailedOverlay(
-                            reason = s.reason,
-                            onRecross = { onReconnect(session.id) },
-                            onClose = { onClose(session.id) },
-                        )
+            // State overlays fade over the water instead of popping — keyed on the
+            // kind of state (plus clean/dirty for disconnects) so an attempt counter
+            // ticking up doesn't re-run the whole entrance.
+            AnimatedContent(
+                targetState = state,
+                contentKey = { st ->
+                    when (st) {
+                        is TerminalSession.State.Disconnected -> "down-${st.clean}"
+                        else -> st::class.simpleName ?: "?"
                     }
-                else -> {}
+                },
+                transitionSpec = {
+                    fadeIn(tween(240)) togetherWith fadeOut(tween(240)) using
+                        SizeTransform(clip = false)
+                },
+                label = "stateVeil",
+            ) { s ->
+                when (s) {
+                    is TerminalSession.State.Connecting -> ConnectingPill("crossing the Styx…")
+                    is TerminalSession.State.Reconnecting ->
+                        ReconnectingOverlay(attempt = s.attempt, onGiveUp = { onClose(session.id) })
+                    is TerminalSession.State.Disconnected ->
+                        if (s.clean) {
+                            // You stepped off the ferry — a quick flourish, then the Dock
+                            // (where the ferry docks). Auto-dismiss, no tap needed.
+                            ReturnedToShoreFlourish()
+                            LaunchedEffect(session.id) {
+                                delay(900)
+                                onClose(session.id)
+                            }
+                        } else {
+                            CrossingFailedOverlay(
+                                reason = s.reason,
+                                onRecross = { onReconnect(session.id) },
+                                onClose = { onClose(session.id) },
+                            )
+                        }
+                    else -> Box(Modifier.fillMaxSize())
+                }
             }
         }
         // One strip, two tenants: an empty line shows the rehearsed snippets; the
@@ -549,22 +574,47 @@ private fun SuggestionChipPill(suggestion: Suggestion, onClick: () -> Unit) {
 
 // ---- Session-state overlays -------------------------------------------------------
 
-/** A slim bottom pill for the "crossing the Styx…" cold-connect beat. */
+/**
+ * A slim bottom pill for the "crossing the Styx…" cold-connect beat, with a braille
+ * oar turning beside the words — the same sea-script the ferry sails on.
+ */
 @Composable
 private fun ConnectingPill(text: String) {
+    val phase by rememberInfiniteTransition(label = "styxOar").animateFloat(
+        initialValue = 0f,
+        targetValue = OAR_FRAMES.length.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(OAR_FRAMES.length * 90, easing = LinearEasing),
+        ),
+        label = "oar",
+    )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        Text(
-            text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
             modifier = Modifier
                 .padding(bottom = 16.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 18.dp, vertical = 8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                OAR_FRAMES[phase.toInt() % OAR_FRAMES.length].toString(),
+                fontFamily = CharonMono,
+                style = MaterialTheme.typography.bodyMedium,
+                color = StyxTeal,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
+
+/** Braille strokes of a turning oar, one frame per character. */
+private const val OAR_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 /**
  * A transport drop, redialing: a dimming scrim, a pulsing gold lantern, the attempt
@@ -620,6 +670,8 @@ private fun CrossingFailedOverlay(
     onRecross: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(Unit) { haptic.performHapticFeedback(HapticFeedbackType.Reject) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -659,8 +711,12 @@ private fun CrossingFailedOverlay(
  */
 @Composable
 private fun ReturnedToShoreFlourish() {
+    val haptic = LocalHapticFeedback.current
     var appeared by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { appeared = true }
+    LaunchedEffect(Unit) {
+        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+        appeared = true
+    }
     val sweep by animateFloatAsState(
         targetValue = if (appeared) 1f else 0f,
         animationSpec = tween(560, easing = FastOutSlowInEasing),
