@@ -24,6 +24,18 @@ interface SshEngine {
         publicLine: String,
         verifier: KnownHostsVerifier,
     )
+
+    /**
+     * Run one command over a short-lived, verified connection — connect, exec,
+     * hang up — and return its stdout. No PTY, no session left behind; this is
+     * how the fleet import asks a mooring for `tailscale status --json`.
+     * Throws with a readable message on refusal. Blocking; call off-main.
+     */
+    fun execOnce(
+        config: ConnectConfig,
+        command: String,
+        verifier: KnownHostsVerifier,
+    ): String
 }
 
 interface SshConnection {

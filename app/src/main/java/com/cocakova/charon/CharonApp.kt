@@ -5,6 +5,7 @@ import com.cocakova.charon.data.db.CharonDb
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
+import com.cocakova.charon.fleet.FleetWatch
 import com.cocakova.charon.ssh.SessionManager
 import com.cocakova.charon.ssh.SftpTransfers
 import org.bouncycastle.jce.provider.BouncyCastleProvider
@@ -25,6 +26,10 @@ class CharonApp : Application() {
         private set
     lateinit var transfers: SftpTransfers
         private set
+
+    // App-wide so the last soundings survive leaving the Dock and coming back;
+    // the dialing itself only runs while the Dock is on screen.
+    val fleetWatch = FleetWatch()
 
     override fun onCreate() {
         super.onCreate()

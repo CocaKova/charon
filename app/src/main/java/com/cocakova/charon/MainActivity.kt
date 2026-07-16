@@ -29,6 +29,8 @@ import com.cocakova.charon.data.db.SnippetDao
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.data.repository.HostVault
 import com.cocakova.charon.data.repository.KeyVault
+import com.cocakova.charon.fleet.FleetWatch
+import com.cocakova.charon.fleet.SoundingTarget
 import com.cocakova.charon.presentation.dock.DockScreen
 import com.cocakova.charon.presentation.dock.TrustGate
 import com.cocakova.charon.presentation.sftp.FilesScreen
@@ -56,6 +58,7 @@ class MainActivity : FragmentActivity() {
                     app.sessionManager, app.hostVault, app.keyVault,
                     app.commandHistory, app.transfers,
                     app.db.snippets(), app.db.portForwards(),
+                    app.fleetWatch,
                 )
             }
         }
@@ -111,6 +114,7 @@ private fun CharonRoot(
     transfers: SftpTransfers,
     snippetDao: SnippetDao,
     portForwardDao: PortForwardDao,
+    fleetWatch: FleetWatch,
 ) {
     val active by sessionManager.activeSession.collectAsState()
     val sessions by sessionManager.sessions.collectAsState()
@@ -122,6 +126,7 @@ private fun CharonRoot(
     val allForwards by portForwardDao.all().collectAsState(initial = emptyList())
     val runningForwards by sessionManager.runningForwards.collectAsState()
     val forwardError by sessionManager.forwardError.collectAsState()
+    val soundings by fleetWatch.soundings.collectAsState()
     val scope = rememberCoroutineScope()
 
     val current = active
@@ -228,6 +233,29 @@ private fun CharonRoot(
                             "this mooring has no saved password to carry the key",
                         )
                     sessionManager.grantPassage(config, identity.publicLine)
+                },
+                soundings = soundings,
+                onSoundFleet = { fleet ->
+                    fleetWatch.soundAll(
+                        fleet.map { SoundingTarget(it.id, it.host, it.port) },
+                    )
+                },
+                // Reactive: derived from the collected `sessions` list so the
+                // quick-actions sheet re-reads if a crossing opens or ends while it's up.
+                liveSessionFor = { host ->
+                    sessions.firstOrNull { sessionManager.hostIdFor(it.id) == host.id }?.id
+                },
+                onOpenHold = { sessionId -> filesFor = sessionId },
+                onFetchTailnet = { host ->
+                    // Prefer the host's own live transport — no second handshake, no
+                    // re-trust/biometric prompt, no TOFU gate hiding under the sheet.
+                    sessionManager.execOnHost(host.id, "tailscale status --json")
+                        ?: hostVault.connectConfig(host)
+                            ?.let { sessionManager.execOnce(it, "tailscale status --json") }
+                        ?: Result.failure(IllegalStateException("the crossing was not unlocked"))
+                },
+                onAddMoorings = { drafts ->
+                    scope.launch { drafts.forEach { hostVault.save(it) } }
                 },
             )
         }

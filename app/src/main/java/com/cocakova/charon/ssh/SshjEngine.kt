@@ -31,28 +31,60 @@ class SshjEngine : SshEngine {
         publicLine: String,
         verifier: KnownHostsVerifier,
     ) {
+        val line = shellQuote(publicLine.trim())
+        val file = "\"\$HOME/.ssh/authorized_keys\""
+        oneShotExec(
+            config,
+            "umask 077 && mkdir -p \"\$HOME/.ssh\" && touch $file && " +
+                "chmod 700 \"\$HOME/.ssh\" && chmod 600 $file && " +
+                "{ grep -qxF $line $file || printf '%s\\n' $line >> $file; }",
+            verifier,
+            "the remote host refused the key",
+        )
+    }
+
+    override fun execOnce(
+        config: ConnectConfig,
+        command: String,
+        verifier: KnownHostsVerifier,
+    ): String = oneShotExec(config, command, verifier, "the mooring refused the errand")
+
+    /**
+     * Connect, authenticate, run one command over a short-lived verified
+     * connection, and hang up — the single owner of the "short-lived verified
+     * connection" ritual, shared by the key courier and the fleet import.
+     *
+     * The read is bounded by a socket read timeout ([ONE_SHOT_TIMEOUT_S]) set the
+     * moment the transport is up (after the TOFU handshake, which keeps the long
+     * timeoutMs). A command that never closes stdout — a wedged daemon, a shell rc
+     * that prompts — surfaces as a SocketTimeoutException instead of parking the
+     * IO thread forever. Blocking; call off-main.
+     */
+    private fun oneShotExec(
+        config: ConnectConfig,
+        command: String,
+        verifier: KnownHostsVerifier,
+        refusalMessage: String,
+    ): String {
         val client = client(verifier)
         try {
             client.connect(config.host, config.port)
+            // TOFU is resolved inside connect(); now bound every subsequent read so
+            // the errand can't hang the caller.
+            client.timeout = ONE_SHOT_TIMEOUT_S * 1000
             authenticate(client, config)
             val sshSession = client.startSession()
             try {
-                val line = shellQuote(publicLine.trim())
-                val file = "\"\$HOME/.ssh/authorized_keys\""
-                val command = sshSession.exec(
-                    "umask 077 && mkdir -p \"\$HOME/.ssh\" && touch $file && " +
-                        "chmod 700 \"\$HOME/.ssh\" && chmod 600 $file && " +
-                        "{ grep -qxF $line $file || printf '%s\\n' $line >> $file; }",
-                )
-                command.join(30, TimeUnit.SECONDS)
-                val status = command.exitStatus
-                    ?: throw IllegalStateException("the courier timed out")
+                val cmd = sshSession.exec(command)
+                val out = cmd.inputStream.bufferedReader().readText()
+                cmd.join(ONE_SHOT_TIMEOUT_S.toLong(), TimeUnit.SECONDS)
+                val status = cmd.exitStatus
+                    ?: throw IllegalStateException("the mooring took too long to answer")
                 if (status != 0) {
-                    val detail = command.errorStream.bufferedReader().readText().trim()
-                    throw IllegalStateException(
-                        detail.ifBlank { "the remote host refused the key (exit $status)" },
-                    )
+                    val detail = cmd.errorStream.bufferedReader().readText().trim()
+                    throw IllegalStateException(detail.ifBlank { "$refusalMessage (exit $status)" })
                 }
+                return out
             } finally {
                 runCatching { sshSession.close() }
             }
@@ -267,6 +299,12 @@ class SshjEngine : SshEngine {
         }
         if (keyFailure != null) throw keyFailure
         error("no authentication method provided")
+    }
+
+    companion object {
+        /** Read bound for a one-shot errand — long enough for a slow tailnet RTT,
+         *  short enough that a wedged command doesn't strand the caller. */
+        private const val ONE_SHOT_TIMEOUT_S = 25
     }
 }
 

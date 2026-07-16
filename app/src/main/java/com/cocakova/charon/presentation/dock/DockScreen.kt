@@ -59,9 +59,17 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.repository.HostDraft
+import com.cocakova.charon.fleet.Reach
+import com.cocakova.charon.fleet.Sounding
+import com.cocakova.charon.theme.WarnEmber
 import com.cocakova.charon.presentation.components.StyxCrossing
 import com.cocakova.charon.presentation.keys.KeysSheet
 import com.cocakova.charon.ssh.TerminalSession
@@ -92,6 +100,12 @@ fun DockScreen(
     onImportKey: suspend (String, String, String?, Boolean) -> Unit,
     onReleaseKey: suspend (String) -> Unit,
     onGrantKey: suspend (HostEntity, IdentityEntity) -> Unit,
+    soundings: Map<String, Sounding>,
+    onSoundFleet: suspend (List<HostEntity>) -> Unit,
+    liveSessionFor: (HostEntity) -> String?,
+    onOpenHold: (String) -> Unit,
+    onFetchTailnet: suspend (HostEntity) -> Result<String>,
+    onAddMoorings: (List<HostDraft>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
@@ -99,6 +113,25 @@ fun DockScreen(
 
     var showKeys by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showFleet by remember { mutableStateOf(false) }
+    var quickActions by remember { mutableStateOf<HostEntity?>(null) }
+
+    // The soundings loop: dial the whole fleet while the Dock is on screen AND the
+    // app is in the foreground (repeatOnLifecycle stops the dialing when the phone
+    // is pocketed — a composition-scoped effect alone would keep firing in the
+    // background). Keyed on only the dial-relevant fields so a rename or lantern
+    // change doesn't restart the loop and re-storm the fleet; a genuine
+    // add/remove/re-address does.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val fleetKey = remember(hosts) { hosts.map { Triple(it.id, it.host, it.port) } }
+    LaunchedEffect(fleetKey, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                if (hosts.isNotEmpty()) onSoundFleet(hosts)
+                delay(25_000)
+            }
+        }
+    }
     var query by rememberSaveable { mutableStateOf("") }
     // Harbors the user has folded shut. Ephemeral by design — a fresh launch shows
     // the whole fleet.
@@ -231,9 +264,14 @@ fun DockScreen(
                     items(section.hosts, key = { it.id }) { host ->
                         MooringCard(
                             host = host,
+                            sounding = soundings[host.id],
                             enabled = !connecting,
                             onCross = { onConnect(host) },
                             onEdit = { editing = EditTarget.Existing(host) },
+                            onHold = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                quickActions = host
+                            },
                             modifier = Modifier.animateItem(),
                         )
                     }
@@ -254,6 +292,13 @@ fun DockScreen(
                     enabled = !connecting,
                     firstMooring = hosts.isEmpty(),
                     onClick = { editing = EditTarget.New },
+                    modifier = Modifier.animateItem(),
+                )
+            }
+            item(key = "chart-waters") {
+                ChartWatersCard(
+                    enabled = !connecting,
+                    onClick = { showFleet = true },
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -298,6 +343,30 @@ fun DockScreen(
 
     if (showSettings) {
         SettingsSheet(onDismiss = { showSettings = false })
+    }
+
+    if (showFleet) {
+        FleetSheet(
+            hosts = hosts,
+            identities = identities,
+            onDismiss = { showFleet = false },
+            onFetchTailnet = onFetchTailnet,
+            onAddMoorings = onAddMoorings,
+        )
+    }
+
+    quickActions?.let { host ->
+        QuickActionsSheet(
+            host = host,
+            sounding = soundings[host.id],
+            liveSessionId = liveSessionFor(host),
+            onDismiss = { quickActions = null },
+            onCross = { onConnect(host) },
+            onStepAboard = onResumeSession,
+            onOpenHold = onOpenHold,
+            onEdit = { editing = EditTarget.Existing(host) },
+            onDelete = { onDelete(host.id) },
+        )
     }
 }
 
@@ -454,12 +523,15 @@ private fun HarborHeader(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MooringCard(
     host: HostEntity,
+    sounding: Sounding?,
     enabled: Boolean,
     onCross: () -> Unit,
     onEdit: () -> Unit,
+    onHold: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // The card gives slightly under the thumb — a plank taking weight.
@@ -473,24 +545,47 @@ private fun MooringCard(
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-            .clickable(
+            .combinedClickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
                 enabled = enabled,
                 onClick = onCross,
+                onLongClick = onHold,
             )
             .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Mooring lantern — the host's colour tag. Reachability dots (live TCP dial)
-        // arrive with the fleet milestone; until then it's a steady categorising glow.
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(lanternColor(host.colorHex)),
-        )
-        Spacer(Modifier.width(12.dp))
+        // Mooring lantern: the host's colour tag stays full-strength so colour-coding
+        // reads at a glance even for offline hosts — reachability rides on top of it,
+        // never over it. Answering water = a teal-tinted halo around the flame; dark
+        // water = a WarnEmber tick at its foot; unsounded = just the flame.
+        val lantern = lanternColor(host.colorHex)
+        Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+            if (sounding?.reach == Reach.REACHABLE) {
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(lantern.copy(alpha = 0.28f)),
+                )
+            }
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(lantern),
+            )
+            if (sounding?.reach == Reach.UNREACHABLE) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(WarnEmber),
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 host.displayName,
@@ -501,6 +596,8 @@ private fun MooringCard(
                 buildString {
                     append("${host.username}@${host.host}")
                     if (host.port != 22) append(":${host.port}")
+                    // Last-crossed stays put; the live round-trip rides alongside it
+                    // so a reachability flap never erases the timestamp.
                     if (host.lastConnectedAt > 0L) {
                         append("  ·  ")
                         append(
@@ -510,6 +607,10 @@ private fun MooringCard(
                                 DateUtils.MINUTE_IN_MILLIS,
                             ),
                         )
+                    }
+                    val latency = sounding?.latencyMs
+                    if (sounding?.reach == Reach.REACHABLE && latency != null) {
+                        append("  ·  $latency ms")
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -556,5 +657,35 @@ private fun NewCrossingCard(
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
+
+/** The fleet import's front door: tailnet charting and the near-waters sweep. */
+@Composable
+private fun ChartWatersCard(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "⚓ chart the waters",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MistGrey,
+        )
+        Text(
+            "import the tailnet  ·  sound the near waters",
+            style = MaterialTheme.typography.bodySmall,
+            color = MistGrey.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
 }
