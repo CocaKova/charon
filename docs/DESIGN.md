@@ -79,6 +79,17 @@ wears **one thin band of instrument panel** and otherwise gets out of the way:
 - **Touch is expressive, in theme**: selection washes StyxTeal with a teal **copy**
   pill; scrolled-back history shows a gold **▼ live** pill (the mouse-app wheel and the
   scrollback share one drag). Gesture/selection/mouse model: `docs/INPUT.md`.
+- **The toll** (v0.7.3): when the remote reads a secret (sudo/ssh/su — recognized by
+  prompt grammar plus an echo net), a gold-ringed pill rises top-center: "**the
+  ferryman asks the toll**", an obol coin that flips once per hidden keystroke (never
+  a length gauge), "**the toll is paid**" in gold + Confirm haptic on Enter. Beneath
+  the ceremony, the real work: hidden keystrokes never touch autofill, history, or the
+  IME's dictionary (the keyboard itself flips to a password editor). `docs/INPUT.md §2c`.
+- **The lading** (v0.7.3): a package install (apt/dnf/pacman/pip/npm…) sails a strip
+  at the live edge — a gold **laden barge** crossing braille water, steered by the
+  manager's own on-screen percent (patrolling when there isn't one), the package under
+  hand named beneath, "cargo ashore" at 100%. The wall of scrolling text becomes a
+  crossing you can watch. `docs/INPUT.md §2c`.
 - **Cursor** is the one always-on brand mark inside the grid: a StyxTeal block with a
   soft 530 ms blink; the off-phase keeps a hairline teal outline (never vanishes), and
   output holds it solid.

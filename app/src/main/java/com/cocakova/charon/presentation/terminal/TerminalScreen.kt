@@ -2,8 +2,10 @@ package com.cocakova.charon.presentation.terminal
 
 import android.content.Context
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -17,6 +19,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -72,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.autocomplete.Completer
+import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.autocomplete.Suggestion
 import com.cocakova.charon.data.db.PortForwardEntity
@@ -87,6 +91,8 @@ import com.cocakova.charon.theme.StyxBlack
 import com.cocakova.charon.theme.StyxTeal
 import com.cocakova.charon.theme.WarnEmber
 import kotlinx.coroutines.delay
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.sin
 
 @Composable
@@ -116,6 +122,9 @@ fun TerminalScreen(
     val state by session.state.collectAsState()
     val selection by session.selection.collectAsState()
     val scrollOffset by session.scrollOffset.collectAsState()
+    val toll by session.toll.collectAsState()
+    val tollPulse by session.tollPulse.collectAsState()
+    val cargo by session.cargo.collectAsState()
     val clipboard = LocalClipboardManager.current
     var ctrl by remember { mutableStateOf(Sticky.OFF) }
     var alt by remember { mutableStateOf(Sticky.OFF) }
@@ -194,6 +203,65 @@ fun TerminalScreen(
     // Charted channels sheet, raised from the switcher's ⇆.
     var showForwards by remember { mutableStateOf(false) }
 
+    // The toll, as displayed: flips the IME into a password editor while it stands,
+    // and holds the "paid" face for a beat after sudo's newline tears the pill down.
+    var tollShown by remember(session.id) { mutableStateOf<TerminalSession.TollPhase?>(null) }
+    LaunchedEffect(toll) {
+        inputView?.secure = toll != null
+        if (toll != null) {
+            tollShown = toll
+        } else if (tollShown == TerminalSession.TollPhase.PAID) {
+            delay(900)
+            tollShown = null
+        } else {
+            tollShown = null
+        }
+    }
+
+    // The echo net: a printable keystroke the remote never answers is being read
+    // in secret — a prompt the toll grammar didn't recognize (read -s, another
+    // language). The session then forgets the line and raises the toll itself.
+    LaunchedEffect(draft) {
+        if (draft.isEmpty()) return@LaunchedEffect
+        val pending = session.echoPending
+        if (pending == 0L) return@LaunchedEffect
+        delay(700)
+        if (session.echoPending == pending) session.markHiddenInput()
+    }
+
+    // The lading glean: while a cargo watch is armed, read the bottom of the screen
+    // for the package manager's output grammar — per-package verb lines and the
+    // freshest percent — and keep the strip alive only while cargo is moving.
+    var cargoItem by remember(session.id) { mutableStateOf<String?>(null) }
+    var cargoPct by remember(session.id) { mutableStateOf<Int?>(null) }
+    var cargoLive by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(cargo) {
+        if (cargo == null) {
+            cargoLive = false
+            return@LaunchedEffect
+        }
+        cargoItem = null
+        cargoPct = null
+        cargoLive = false
+        var verbAt = 0L
+        while (true) {
+            val glean = CargoLading.glean(session.tailText(8))
+            val now = System.nanoTime()
+            if (glean.verbSeen) verbAt = now
+            if (verbAt != 0L) {
+                glean.item?.let { cargoItem = it }
+                glean.percent?.let { cargoPct = it }
+            }
+            cargoLive = verbAt != 0L && now - verbAt < 4_000_000_000L
+            // A minute of total silence means the lading ended long ago.
+            if (now - session.lastOutputAt > 60_000_000_000L) {
+                session.endCargo()
+                break
+            }
+            delay(200)
+        }
+    }
+
     // Stepping off the terminal must drop the keyboard NOW, while the input view is
     // still attached — the onDispose fallback fires after the crossfade detaches it,
     // when its window token is already dead and the hide is a silent no-op.
@@ -246,6 +314,7 @@ fun TerminalScreen(
                 update = { view ->
                     view.onInput = { emit(it, it.length == 1) }
                     view.appCursorKeys = { session.term.cursorKeysApp }
+                    view.secure = toll != null
                 },
                 modifier = Modifier.fillMaxSize().focusRequester(inputFocus),
             )
@@ -280,37 +349,49 @@ fun TerminalScreen(
                 delay(1400)
                 dimsShown = false
             }
-            if (dimsShown) {
-                val (c, r) = dims
-                Text(
-                    "$c × $r",
-                    fontFamily = CharonMono,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 12.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (c < 80 || r < 24) WarnEmber else StyxTeal)
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                )
+            Column(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (dimsShown) {
+                    val (c, r) = dims
+                    Text(
+                        "$c × $r",
+                        fontFamily = CharonMono,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.background,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (c < 80 || r < 24) WarnEmber else StyxTeal)
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                tollShown?.let { TollPill(phase = it, pulse = tollPulse) }
             }
 
-            // Scrolled-back indicator: a pill anchored to the live edge. Tap to
-            // return to the bottom (typing does the same).
-            if (scrollOffset > 0) {
-                Text(
-                    "▼ live",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 12.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(ObolGold)
-                        .clickable { session.scrollToBottom() }
-                        .padding(horizontal = 18.dp, vertical = 7.dp),
-                )
+            // Anchored to the live edge: the lading strip while cargo is moving,
+            // and the scrolled-back pill (tap to return; typing does the same).
+            Column(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                AnimatedVisibility(visible = cargo != null && cargoLive && toll == null) {
+                    CargoStrip(item = cargoItem, percent = cargoPct)
+                }
+                if (scrollOffset > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "▼ live",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.background,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(ObolGold)
+                            .clickable { session.scrollToBottom() }
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                    )
+                }
             }
 
             // Copy affordances while a selection holds: "all" swells the selection to
@@ -391,7 +472,7 @@ fun TerminalScreen(
         }
         // One strip, two tenants: an empty line shows the rehearsed snippets; the
         // moment typing starts, smart autofill takes the stage. They never fight.
-        if (suggestions.isNotEmpty()) {
+        if (suggestions.isNotEmpty() && toll == null) {
             CommandSuggestions(
                 suggestions = suggestions,
                 onAccept = { s ->
@@ -400,7 +481,7 @@ fun TerminalScreen(
                     session.trackInput(s.insert)
                 },
             )
-        } else if (draft.isBlank() && state is TerminalSession.State.Connected) {
+        } else if (draft.isBlank() && toll == null && state is TerminalSession.State.Connected) {
             SnippetBar(
                 snippets = snippets,
                 hostId = hostId,
@@ -705,6 +786,135 @@ private fun SuggestionChipPill(suggestion: Suggestion, onClick: () -> Unit) {
         Text(text = label, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
     }
 }
+
+// ---- The toll & the lading ----------------------------------------------------------
+
+/**
+ * Raised while the remote reads a secret. The obol flips edge-on and back once per
+ * hidden keystroke — acknowledgement without a length gauge — and the pill turns
+ * gold "the toll is paid" on Enter. While it stands, nothing typed touches the
+ * autofill draft, the command history, or the IME's dictionary.
+ */
+@Composable
+private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
+    val haptic = LocalHapticFeedback.current
+    val paid = phase == TerminalSession.TollPhase.PAID
+    val flip = remember { Animatable(0f) }
+    LaunchedEffect(pulse) {
+        if (pulse > 0) {
+            flip.snapTo(0f)
+            flip.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
+        }
+    }
+    LaunchedEffect(paid) {
+        if (paid) haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+    }
+    val breathe by rememberInfiniteTransition(label = "tollBreathe").animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "tollGlow",
+    )
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, ObolGold.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .graphicsLayer {
+                    scaleX = abs(cos(flip.value * Math.PI)).toFloat()
+                    alpha = if (paid) 1f else breathe
+                }
+                .clip(CircleShape)
+                .background(ObolGold),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            if (paid) "the toll is paid" else "the ferryman asks the toll",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (paid) ObolGold else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The lading strip: while a package manager is hauling, a laden barge crosses a
+ * braille waterline — steered by the manager's own percent when one is on screen,
+ * patrolling when not — with the package under hand named beneath.
+ */
+@Composable
+private fun CargoStrip(item: String?, percent: Int?) {
+    val drift by rememberInfiniteTransition(label = "cargoWater").animateFloat(
+        initialValue = 0f,
+        targetValue = WATER_FRAMES.length.toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(WATER_FRAMES.length * 260, easing = LinearEasing),
+        ),
+        label = "cargoDrift",
+    )
+    val patrol by rememberInfiniteTransition(label = "cargoPatrol").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(4200, easing = LinearEasing),
+        ),
+        label = "cargoPatrolFrac",
+    )
+    val frac = percent?.let { it / 100f } ?: patrol
+    val span = CARGO_WATER_WIDTH - BARGE.length
+    val bargeAt = (span * frac).toInt().coerceIn(0, span)
+    val water = buildAnnotatedString {
+        for (i in 0 until CARGO_WATER_WIDTH) {
+            if (i >= bargeAt && i < bargeAt + BARGE.length) {
+                withStyle(SpanStyle(color = ObolGold)) { append(BARGE[i - bargeAt]) }
+            } else {
+                withStyle(SpanStyle(color = StyxTeal.copy(alpha = 0.55f))) {
+                    append(WATER_FRAMES[(i + drift.toInt()) % WATER_FRAMES.length])
+                }
+            }
+        }
+    }
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(water, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
+        Spacer(Modifier.height(3.dp))
+        val head = buildString {
+            append(if (percent == 100) "cargo ashore" else "lading the hold")
+            item?.let { append(" — ").append(it.take(28)) }
+        }
+        val label = buildAnnotatedString {
+            withStyle(SpanStyle(color = MistGrey)) { append(head) }
+            percent?.let {
+                append("  ")
+                withStyle(SpanStyle(color = ObolGold, fontWeight = FontWeight.Medium)) {
+                    append("$it%")
+                }
+            }
+        }
+        Text(label, fontFamily = CharonMono, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+/** Ripples for the lading's waterline, one frame per character. */
+private const val WATER_FRAMES = "⠈⠐⠠⢀⡀⠄⠂⠁"
+
+/** The laden barge, riding low in the water. */
+private const val BARGE = "⣼⣿⣧"
+
+private const val CARGO_WATER_WIDTH = 24
 
 // ---- Session-state overlays -------------------------------------------------------
 

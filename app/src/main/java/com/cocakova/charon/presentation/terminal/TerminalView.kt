@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -133,13 +134,21 @@ fun TerminalView(
         }
     }
 
+    // The zoom sink must outlive recomposition: the pinch handler below is keyed on
+    // Unit so the gesture survives the font-size changes it causes itself.
+    val currentOnZoom by rememberUpdatedState(onZoom)
+
     Canvas(
         modifier = modifier
             .onSizeChanged { pendingSize = it }
             // Pinch to zoom the font; single-finger has zoom == 1 so this stays inert.
-            .pointerInput(paints) {
+            // Keyed on Unit, NOT paints: every zoom tick rebuilds paints, and keying on
+            // them restarted this pointerInput mid-gesture — the pinch died after one
+            // delta and each squeeze only moved the font a hair. The gesture must ride
+            // through the very recompositions it triggers.
+            .pointerInput(Unit) {
                 detectTransformGestures { _, _, zoom, _ ->
-                    if (zoom != 1f) onZoom(zoom)
+                    if (zoom != 1f) currentOnZoom(zoom)
                 }
             }
             // Tap: clear an active selection; in a mouse app send the click AND make
