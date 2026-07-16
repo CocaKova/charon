@@ -1,5 +1,6 @@
 package com.cocakova.charon.ssh
 
+import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.terminal.input.KeyEncoder
@@ -66,6 +67,13 @@ class TerminalSession(
         synchronized(lock) {
             val before = term.screen.scrollbackSize
             term.write(bytes, offset, length)
+            lastOutputAt = System.nanoTime()
+            // The remote spoke: whatever keystroke was waiting on its echo has been
+            // answered, one way or another — the line is not reading in secret.
+            if (echoPending != 0L) {
+                echoPending = 0L
+                echoSeen = true
+            }
             // Crossing into or out of the alternate screen (tmux, vim, htop…) means
             // whatever line we thought was being typed — and whatever was selected —
             // belongs to a different world; reset both so stale text can't linger.
@@ -74,8 +82,24 @@ class TerminalSession(
                 resetLine()
                 _commandDraft.value = ""
                 selection.value = null
+                endToll()
+                _cargo.value = null
             }
             val grew = term.screen.scrollbackSize - before
+            // The toll: release when the prompt line moves on (Enter answered, the
+            // attempt failed, the program printed past it), then arm whenever the
+            // cursor rests at the end of a secret-asking prompt — release and re-arm
+            // can land in one burst ("Sorry, try again." plus a fresh prompt).
+            if (!term.usingAlt) {
+                if (_toll.value != null && (
+                        term.cursorY != tollRow || grew > 0 ||
+                            term.screen.line(tollRow).toText() != tollPrompt
+                        )
+                ) {
+                    endToll()
+                }
+                if (_toll.value == null && looksLikeSecretPrompt()) armToll()
+            }
             if (grew > 0) {
                 // While the user is scrolled up, grow the offset by however many lines
                 // were just evicted into scrollback so the viewport stays put instead
@@ -114,6 +138,92 @@ class TerminalSession(
         onOutput?.invoke(text.toByteArray(Charsets.UTF_8))
     }
 
+    // ---- The toll (hidden input) -----------------------------------------------------
+    // When the remote reads a secret — sudo, ssh, su, read -s — nothing typed may touch
+    // the autofill draft or the command history. Two nets, both structural: the
+    // password-prompt grammar arms the toll before the first keystroke, and the echo
+    // net (a keystroke the remote never answers) catches prompts in any language.
+
+    enum class TollPhase { ASKED, PAID }
+
+    private val _toll = MutableStateFlow<TollPhase?>(null)
+    /** Non-null while a secret is being read; PAID for the beat after Enter. */
+    val toll: StateFlow<TollPhase?> = _toll
+
+    private val _tollPulse = MutableStateFlow(0)
+    /** Ticks once per hidden keystroke — animation fuel only, never a length gauge. */
+    val tollPulse: StateFlow<Int> = _tollPulse
+
+    private var tollRow = -1
+    private var tollPrompt = ""
+
+    /** Nanotime of the last remote byte; idle timers (echo net, cargo) read this. */
+    @Volatile var lastOutputAt: Long = System.nanoTime()
+        private set
+
+    /** Nanotime of the first printable keystroke still waiting for any remote
+     *  answer on this line, or 0. The UI's echo net watches it: unanswered for
+     *  long enough means the remote is reading in secret. */
+    @Volatile var echoPending: Long = 0L
+        private set
+    private var echoSeen = false
+
+    private fun looksLikeSecretPrompt(): Boolean {
+        val line = term.screen.line(term.cursorY).toText()
+        if (term.cursorX < line.length) return false   // cursor must rest at the end
+        val t = line.trimEnd()
+        if (!t.endsWith(":")) return false
+        val lower = t.lowercase()
+        return "password" in lower || "passphrase" in lower
+    }
+
+    private fun armToll() {
+        tollRow = term.cursorY
+        tollPrompt = term.screen.line(tollRow).toText()
+        _tollPulse.value = 0
+        _toll.value = TollPhase.ASKED
+    }
+
+    private fun endToll() {
+        if (_toll.value == null) return
+        _toll.value = null
+        tollRow = -1
+        tollPrompt = ""
+    }
+
+    /**
+     * The echo net's verdict, delivered by the UI timer: a keystroke went out and
+     * the remote said nothing back. Whatever was reconstructed so far was never
+     * echoed — it is a secret, so it is forgotten, and the toll is armed.
+     */
+    fun markHiddenInput() {
+        synchronized(lock) {
+            if (_toll.value != null || term.usingAlt) return
+            armToll()
+            lineBuf.setLength(0)
+            lineTrusted = false
+            _commandDraft.value = ""
+        }
+    }
+
+    // ---- The lading (package installs) -----------------------------------------------
+
+    data class Cargo(val manager: String, val since: Long = System.nanoTime())
+
+    private val _cargo = MutableStateFlow<Cargo?>(null)
+    /** Armed when a submitted command invokes a package manager; the UI gleans the
+     *  screen for its output grammar while this holds. */
+    val cargo: StateFlow<Cargo?> = _cargo
+
+    fun endCargo() {
+        _cargo.value = null
+    }
+
+    /** The bottom [n] rows of the live screen as plain text (the cargo glean). */
+    fun tailText(n: Int): List<String> = synchronized(lock) {
+        ((term.rows - n).coerceAtLeast(0) until term.rows).map { term.screen.line(it).toText() }
+    }
+
     // ---- Command-line tracking (smart autofill) ------------------------------------
     // We reconstruct the line being typed from the bytes the user sends, so the
     // suggestion strip can offer past commands that continue it. This is fed only by
@@ -136,13 +246,18 @@ class TerminalSession(
 
     /** Feed user-originated bytes through the line reconstructor. */
     fun trackInput(sent: String) {
+        if (_toll.value != null) {
+            trackHidden(sent)
+            return
+        }
         var i = 0
         while (i < sent.length) {
             val c = sent[i]
             when {
                 c == '\r' || c == '\n' -> { commitLine(); i++ }
-                c == '\u0003' || c == '\u0015' -> { resetLine(); i++ }   // ^C, ^U
-                c == '\u0017' -> { deleteWord(); i++ }                    // ^W
+                c == '\u0003' -> { resetLine(); _cargo.value = null; i++ } // ^C sinks the lading too
+                c == '\u0015' -> { resetLine(); i++ }                      // ^U
+                c == '\u0017' -> { deleteWord(); i++ }                     // ^W
                 c == '\u007f' || c == '\b' -> {
                     if (lineBuf.isNotEmpty()) lineBuf.deleteCharAt(lineBuf.length - 1)
                     i++
@@ -150,16 +265,43 @@ class TerminalSession(
                 c == '\u001b' -> { lineTrusted = false; i = skipEscape(sent, i) } // arrows/edits
                 c == '\t' -> { lineTrusted = false; i++ }                 // remote completion
                 c.code < 0x20 -> i++                                      // other controls: skip
-                else -> { if (lineTrusted) lineBuf.append(c); i++ }
+                else -> {
+                    if (lineTrusted) lineBuf.append(c)
+                    // First unanswered printable on this line arms the echo net.
+                    if (!echoSeen && echoPending == 0L) echoPending = System.nanoTime()
+                    i++
+                }
             }
         }
         _commandDraft.value = if (lineTrusted) lineBuf.toString() else ""
     }
 
+    /** The toll is up: keystrokes feed the coin's pulse and nothing else. */
+    private fun trackHidden(sent: String) {
+        var i = 0
+        while (i < sent.length) {
+            val c = sent[i]
+            when {
+                c == '\r' || c == '\n' -> { _toll.value = TollPhase.PAID; resetLine(); i++ }
+                c == '\u0003' -> { endToll(); resetLine(); _cargo.value = null; i++ } // rite abandoned
+                c == '\u007f' || c == '\b' -> {
+                    if (_tollPulse.value > 0) _tollPulse.value--
+                    i++
+                }
+                c == '\u001b' -> i = skipEscape(sent, i)
+                c.code < 0x20 -> i++
+                else -> { _tollPulse.value++; i++ }
+            }
+        }
+    }
+
     private fun commitLine() {
         if (lineTrusted) {
             val cmd = lineBuf.toString().trim()
-            if (cmd.isNotEmpty()) onCommandSubmitted?.invoke(cmd)
+            if (cmd.isNotEmpty()) {
+                onCommandSubmitted?.invoke(cmd)
+                CargoLading.match(cmd)?.let { _cargo.value = Cargo(it) }
+            }
         }
         resetLine()
     }
@@ -167,6 +309,8 @@ class TerminalSession(
     private fun resetLine() {
         lineBuf.setLength(0)
         lineTrusted = true
+        echoPending = 0L
+        echoSeen = false
     }
 
     private fun deleteWord() {

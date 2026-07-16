@@ -49,6 +49,18 @@ class TerminalInputView(context: Context) : View(context) {
             imm().restartInput(this)
         }
 
+    /**
+     * The toll is up: the predictive editor advertises a password field so the IME
+     * drops suggestions, glide trails, and dictionary learning while a secret is
+     * typed. RAW (TYPE_NULL) never exposes text to the IME, so it needs nothing.
+     */
+    var secure: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            if (mode == Mode.PREDICTIVE) imm().restartInput(this)
+        }
+
     init {
         isFocusable = true
         isFocusableInTouchMode = true
@@ -69,8 +81,14 @@ class TerminalInputView(context: Context) : View(context) {
         return if (mode == Mode.PREDICTIVE) {
             // Plain multiline text, no AUTO_CORRECT flag: suggestions and gestures
             // stay available, but the IME shouldn't hard-replace words on space.
-            outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            outAttrs.inputType = if (secure) {
+                InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            } else {
+                InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            }
             PredictiveConnection()
         } else {
             outAttrs.inputType = InputType.TYPE_NULL

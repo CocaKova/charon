@@ -133,9 +133,53 @@ command.
 - **Accepting** — a tap types *only the missing tail* (token completions add the
   trailing space, which immediately surfaces the next word's suggestions). No
   injection of whole lines; the remote echoes everything in place.
-- **Privacy** — passwords never land here: history records only on Enter at a shell
-  prompt, and password prompts don't echo back into the tracker. Probes send fixed
-  read-only commands; nothing typed is ever executed by the engine.
+- **Privacy** — passwords never land here: the **toll** (§2c) intercepts hidden
+  input before it can touch the draft or the history. Probes send fixed read-only
+  commands; nothing typed is ever executed by the engine.
+
+## 2c. The toll — hidden input, and the lading
+
+When the remote reads a secret — `sudo`, `ssh`, `su`, `read -s` — nothing typed may
+touch the autofill draft, the command history, or the IME's dictionary. Charon
+recognizes the moment two ways, both structural (`TerminalSession`):
+
+1. **The prompt grammar** — the cursor resting at the end of a line that ends in
+   `:` and asks for a `password`/`passphrase` (the PAM/OpenSSH prompt convention)
+   arms the toll *before the first keystroke*.
+2. **The echo net** — a printable keystroke the remote never answers (700 ms with
+   zero output; a normal line echoes within the RTT) means it is reading in secret.
+   This catches `read -s` and prompts in any language: the session forgets whatever
+   it had reconstructed and raises the toll itself (`markHiddenInput`, timer in
+   `TerminalScreen`). Any remote output cancels the pending probe (`echoPending`).
+
+While the toll stands:
+
+- **Nothing typed reaches `trackInput`'s line buffer** — keystrokes feed only
+  `tollPulse`, an animation counter (backspace drains it; it is never shown as a
+  length). Enter flips the toll to PAID and commits nothing.
+- **The IME becomes a password editor** (`TerminalInputView.secure`,
+  `TYPE_TEXT_VARIATION_PASSWORD | NO_SUGGESTIONS` in PREDICTIVE mode): no
+  suggestion bar, no glide trail, no dictionary learning. RAW mode already exposes
+  nothing.
+- **The toll pill** (top-center, gold ring): "the ferryman asks the toll", an obol
+  that flips once per hidden keystroke, "the toll is paid" + Confirm haptic on
+  Enter. A failed attempt (sudo re-prompt) tears it down and re-arms it.
+- Suggestion strip and snippet bar stay down.
+
+The toll releases when the prompt line moves on (cursor row change, scroll, or the
+line's text changing under it), on `^C`, on alt-screen flips, and on session switch.
+
+**The lading** (`cargo/CargoLading.kt`): a submitted command that invokes a package
+manager (`apt`/`apt-get`/`dnf`/`pacman`/`dpkg`/`pip`/`npm`/`cargo`/`brew`/`snap`/
+`flatpak`…, `sudo`/env/path transparent) arms a cargo watch on the session. While
+the manager's documented output grammar is visible near the cursor (per-package
+verb lines — `Unpacking…`, `Setting up…`, `Collecting…` — gleaned every 200 ms from
+the bottom rows), a strip rides the live edge: a gold laden barge crossing braille
+water, steered by the freshest on-screen percent when there is one and patrolling
+when there isn't, the package under hand named beneath, "cargo ashore" at 100%.
+The strip fades ~4 s after cargo stops moving; the watch itself ends on `^C`,
+alt-screen, a new cargo command, or a minute of total silence. While the toll is
+up (sudo's password ahead of the install), the strip yields.
 
 ## 3. Gestures on the grid
 
