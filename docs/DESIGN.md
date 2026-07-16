@@ -125,6 +125,35 @@ A homelab grows past a flat list, so the Dock categorises without clutter:
   switcher's **+**), a row of tap-to-resume chips rides the top: the two faces of the
   one session list.
 
+### The fleet — soundings, charting, quick actions (v0.8)
+
+The Dock learns the state of the water:
+
+- **Soundings** — while the Dock is on screen, a parallel TCP dial to every mooring's
+  own SSH port (capped at 16 at once, 1.5 s timeout, re-sounded every 25 s; no daemon,
+  no ICMP, rests the moment you cast off). The lantern answers: reachable water gives
+  it a **halo** and the address line gains the round-trip (`· 12 ms`); dark water dims
+  the flame and sets a small **ember tick** at its foot; unsounded stays the plain glow.
+  Last soundings live app-wide (`fleet/FleetWatch.kt`), so stepping ashore again shows
+  the last-known chart, not a blank harbor.
+- **Chart the waters** — the fleet import's front door, a quiet card under *new
+  crossing*. Two waters: **the tailnet** (ask a saved mooring to run
+  `tailscale status --json` over a one-shot exec — never the PTY — or paste a status by
+  hand; `fleet/TailscaleImport.kt` reads the Peer map, prefers the 100.x IPv4, falls
+  back to MagicDNS) and **near waters** (`fleet/LanSweep.kt` dials :22 across the
+  phone's own /24 — 253 berths, 64 abreast — narrating `dialed/253 · n answer`).
+  Either way the sightings land in one picker: already-moored addresses sit out under
+  an anchor (but stay tappable — same host, different user/port is allowed), the chosen
+  get a shared username, port, optional key of passage, and optional harbor, and one
+  button moors the lot. The fetch prefers a mooring's already-live transport when one
+  is open (no second handshake, no re-trust). Soundings dial only while the app is in
+  the foreground.
+- **Quick actions** — long-press a mooring for the common errands without the edit
+  sheet: *cross*, *copy address*, *edit the mooring*, and — when a crossing is already
+  underway to it — *step aboard* and *the hold*. *Release the mooring* takes a second
+  tap (never a dialog). The sheet's header speaks the last sounding plainly:
+  “answers in 12 ms” / “dark water — no answer” / “unsounded”.
+
 ## The Hold (v0.6 — SFTP)
 
 The ferry carries cargo, and it's part of the fare (Termius paywalls SFTP; Charon

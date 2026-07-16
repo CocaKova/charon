@@ -311,6 +311,36 @@ class SessionManager(
         }
     }
 
+    /**
+     * One command over a short-lived verified connection — the fleet import's
+     * errand-runner. Failures come back as a Result so the sheet can say why.
+     */
+    suspend fun execOnce(config: ConnectConfig, command: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching { engine.execOnce(config, command, verifier) }
+        }
+
+    /** The live session moored to a saved host, if one is underway. */
+    fun sessionForHost(hostId: String): TerminalSession? =
+        managed.values.firstOrNull { it.hostId == hostId }?.session
+
+    /**
+     * Run one command over a saved host's ALREADY-LIVE transport, if a crossing to
+     * it is underway — no second handshake, no fresh auth (and so no re-trust or
+     * biometric re-prompt). Null when no live session holds that host; the caller
+     * falls back to [execOnce]. Blocking; call off-main.
+     */
+    suspend fun execOnHost(hostId: String, command: String): Result<String>? {
+        val connection = managed.values.firstOrNull { it.hostId == hostId }?.connection
+            ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                connection.exec(command, 25)
+                    ?: throw IllegalStateException("the mooring didn't answer the errand")
+            }
+        }
+    }
+
     // ---- helpers -------------------------------------------------------------------
 
     /** The autofill host-context for a live session, or null once it's closed. */
