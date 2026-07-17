@@ -11,6 +11,7 @@ import com.cocakova.charon.data.db.PortForwardDao
 import com.cocakova.charon.data.db.PortForwardEntity
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.service.ConnectionService
+import com.cocakova.charon.service.Horn
 import com.cocakova.charon.theme.TerminalSchemes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ class SessionManager(
     private val engine: SshEngine = SshjEngine(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val horn = Horn(appContext)
 
     /** Everything a live session drags behind it: transport, its config for redial, watchers. */
     private class Managed(
@@ -119,12 +121,18 @@ class SessionManager(
     }
 
     fun connect(config: ConnectConfig, hostId: String? = null) {
-        val scheme = TerminalSchemes.STYX
+        // The livery chosen at the helm; each crossing wears what was set when it
+        // cast off — a change takes hold from the next crossing, like the helm says.
+        val scheme = TerminalSchemes.byName(
+            appContext.getSharedPreferences("charon", Context.MODE_PRIVATE)
+                .getString("scheme", null),
+        )
         val session = TerminalSession(
             label = displayLabel(config),
             basePalette = scheme.ansi16,
             initialFg = scheme.fg,
             initialBg = scheme.bg,
+            cursorColor = scheme.cursor,
         )
         val ms = Managed(session, config, hostId)
         ms.remote = RemoteContext(scope) { cmd -> ms.connection?.exec(cmd) }
@@ -134,6 +142,11 @@ class SessionManager(
             if (CommandGate.isCommandLine(line, ms.remote?.commandSet.orEmpty())) {
                 commandHistory.record(line)
             }
+        }
+        // The horn: a rigged shell (OSC 133, docs/HORN.md) reports commands done;
+        // long voyages that end while the app is away become a push.
+        session.onCommandDone = { command, exit, durationMs ->
+            horn.sound(session.label, command, exit, durationMs)
         }
         managed[session.id] = ms
         lastError.value = null

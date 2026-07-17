@@ -1,10 +1,13 @@
 package com.cocakova.charon
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Base64
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.Crossfade
@@ -35,6 +38,7 @@ import com.cocakova.charon.presentation.dock.DockScreen
 import com.cocakova.charon.presentation.dock.TrustGate
 import com.cocakova.charon.presentation.sftp.FilesScreen
 import com.cocakova.charon.presentation.terminal.TerminalScreen
+import com.cocakova.charon.service.AppVisibility
 import com.cocakova.charon.ssh.ConnectConfig
 import com.cocakova.charon.ssh.SessionManager
 import com.cocakova.charon.ssh.SftpTransfers
@@ -68,6 +72,27 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         // Repeated adb `am start` lands here, not onCreate.
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, application as CharonApp)
+    }
+
+    // The horn (and the crossings notification) need POST_NOTIFICATIONS on 13+;
+    // ask once, on first landing — a denial just keeps the river quiet.
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.visible = true
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            askNotifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    override fun onStop() {
+        AppVisibility.visible = false
+        super.onStop()
     }
 
     /**

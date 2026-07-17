@@ -21,6 +21,8 @@ class TerminalSession(
     basePalette: IntArray? = null,
     initialFg: Int = 0xE6EDF3,
     initialBg: Int = 0x000000,
+    /** The livery's cursor colour; the renderer draws the block in it. */
+    val cursorColor: Int = 0x3ECFB2,
 ) {
     val id: String = UUID.randomUUID().toString()
 
@@ -206,6 +208,38 @@ class TerminalSession(
         }
     }
 
+    // ---- The horn (command completion) -----------------------------------------------
+    // OSC 133 semantic prompts, when the shell is rigged for them (docs/HORN.md):
+    // Enter starts a voyage, C refines its start time to when output actually began,
+    // D ends it with the exit code. The SessionManager decides whether the horn
+    // sounds (long enough, app away); unrigged shells simply never emit D.
+
+    private class Voyage(val command: String, val submittedAt: Long) {
+        @Volatile var startedAt: Long? = null
+    }
+
+    @Volatile private var voyage: Voyage? = null
+
+    /** Fired (from the reader thread) when a rigged shell reports a command done. */
+    var onCommandDone: ((command: String, exitCode: Int?, durationMs: Long) -> Unit)? = null
+
+    init {
+        term.onShellMark = { kind, extra ->
+            val now = System.nanoTime()
+            when (kind) {
+                'C' -> voyage?.startedAt = now
+                'D' -> voyage?.let { v ->
+                    voyage = null
+                    val durationMs = (now - (v.startedAt ?: v.submittedAt)) / 1_000_000
+                    onCommandDone?.invoke(v.command, extra, durationMs)
+                }
+                // A/B (prompt start/end) are accepted but carry no meaning yet —
+                // prompt-jump in scrollback will want them later.
+                else -> {}
+            }
+        }
+    }
+
     // ---- The lading (package installs) -----------------------------------------------
 
     data class Cargo(val manager: String, val since: Long = System.nanoTime())
@@ -255,7 +289,7 @@ class TerminalSession(
             val c = sent[i]
             when {
                 c == '\r' || c == '\n' -> { commitLine(); i++ }
-                c == '\u0003' -> { resetLine(); _cargo.value = null; i++ } // ^C sinks the lading too
+                c == '\u0003' -> { resetLine(); _cargo.value = null; voyage = null; i++ } // ^C sinks lading + voyage
                 c == '\u0015' -> { resetLine(); i++ }                      // ^U
                 c == '\u0017' -> { deleteWord(); i++ }                     // ^W
                 c == '\u007f' || c == '\b' -> {
@@ -304,6 +338,7 @@ class TerminalSession(
             if (cmd.isNotEmpty()) {
                 onCommandSubmitted?.invoke(cmd)
                 CargoLading.match(cmd)?.let { _cargo.value = Cargo(it) }
+                voyage = Voyage(cmd, System.nanoTime())
             }
         }
         resetLine()

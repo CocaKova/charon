@@ -147,6 +147,26 @@ fun StyxCrossing(
                 )
             }
 
+            // Lantern-light on the water: a swaying column of gold dots dropping from
+            // the surface beneath a light, each row a little dimmer and a little more
+            // adrift — the cheapest trick every harbor at night plays for free.
+            fun drawReflection(colF: Float, strength: Float, phase: Float) {
+                if (strength <= 0.05f) return
+                val dotX = (colF * 2).toInt().coerceIn(0, w - 1)
+                val surfRow = surface[dotX] / 4f
+                for (i in 0 until 4) {
+                    val rr = surfRow + 0.35f + i * 0.72f
+                    if (rr > rows - 0.4f) break
+                    val sway = (0.25f + 0.12f * i) * sin(timeS * (1.3f + 0.35f * i) + phase + i * 1.9f)
+                    val shimmer = 0.6f + 0.4f * sin(timeS * 2.3f + phase * 2f + i * 1.1f)
+                    val a = strength * (0.30f - 0.06f * i) * shimmer
+                    drawChar(
+                        REFLECT_CHARS[(i + (phase * 7).toInt()) % REFLECT_CHARS.size],
+                        colF + sway, rr, GOLD_COLOR, a,
+                    )
+                }
+            }
+
             // Stars: sparse single braille dots above the waterline, slow twinkle.
             val skyRows = (rows * 0.42f).toInt()
             for (cy in 0 until skyRows) {
@@ -199,6 +219,25 @@ fun StyxCrossing(
                     drawChar(line[c], c.toFloat(), deckRow + i, PIER_COLOR, if (i == 0) 0.75f else 0.5f)
                 }
             }
+
+            // The pier lamp: a lantern on its post at the shore end, burning gold so
+            // the dock is never dark even with the ferry away. Its light pools on the
+            // water between the pilings.
+            val lampCol = 1f
+            val lampRow = deckRow - 2f
+            val lampBreath = 0.5f + 0.5f * sin(timeS * 1.1f + 2.3f)
+            glowPaint.color = GOLD_COLOR
+            glowPaint.alpha = ((0.05f + 0.04f * lampBreath) * 255).toInt()
+            canvas.drawCircle(
+                (lampCol + 0.5f) * charW, (lampRow + 0.4f) * lineH, lineH * 1.6f, glowPaint,
+            )
+            glowPaint.alpha = ((0.11f + 0.07f * lampBreath) * 255).toInt()
+            canvas.drawCircle(
+                (lampCol + 0.5f) * charW, (lampRow + 0.4f) * lineH, lineH * 0.75f, glowPaint,
+            )
+            drawChar('●', lampCol, lampRow, GOLD_COLOR, 0.85f + 0.15f * lampBreath)
+            drawChar('┃', lampCol, lampRow + 1, POLE_COLOR, 0.55f)
+            drawReflection(lampCol + 0.6f, 0.75f, 2.3f)
 
             // The skiff.
             val bx = boatX.value
@@ -257,6 +296,8 @@ fun StyxCrossing(
                             drawChar(ch, bx + c, topRow + r, color, a * boatAlpha)
                         }
                     }
+                    // The ferry's own lantern, mirrored on the river beneath her.
+                    drawReflection(bx + sprite.lantern.second, boatAlpha * 0.9f, bx * 0.31f)
                 }
 
                 // Wake: bright dots trailing off the stern while under way.
@@ -389,6 +430,7 @@ private val PIER_CHARS = listOf(
 
 private val STAR_CHARS = charArrayOf('⠁', '⠂', '⠄', '⠈')
 private val WAKE_CHARS = charArrayOf('⠐', '⠂', '⠄', '⠠', '⠆')
+private val REFLECT_CHARS = charArrayOf('⠒', '⠔', '⠂', '⠑', '⠄', '⠊')
 private val MIST_CHARS = charArrayOf('⠛', '⠿', '⠷', '⠧', '⠻', '⠟', '⠾')
 
 private val SEA_COLOR = StyxTeal.toArgbInt()

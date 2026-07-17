@@ -237,6 +237,7 @@ fun TerminalView(
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
                     size.width, size.height, cursorOn, selection, scrollOffset,
+                    session.cursorColor,
                 )
             }
         }
@@ -293,6 +294,7 @@ private fun drawTerminal(
     cursorOn: Boolean,
     selection: TerminalSession.Selection?,
     scrollOffset: Int,
+    cursorColor: Int = CURSOR_TEAL,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -383,7 +385,7 @@ private fun drawTerminal(
         val left = term.cursorX * cw
         val top = term.cursorY * ch
         val right = (term.cursorX + if (wideCursor) 2 else 1) * cw
-        p.fill.color = opaque(CURSOR_TEAL)
+        p.fill.color = opaque(cursorColor)
         if (cursorOn) {
             p.fill.alpha = 170
             canvas.drawRect(left, top, right, top + ch, p.fill)
