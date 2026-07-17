@@ -121,6 +121,9 @@ interface HostDao {
     @Query("SELECT * FROM hosts WHERE id = :id")
     suspend fun byId(id: String): HostEntity?
 
+    @Query("SELECT * FROM hosts")
+    suspend fun allOnce(): List<HostEntity>
+
     @Upsert
     suspend fun upsert(host: HostEntity)
 
@@ -138,6 +141,9 @@ interface IdentityDao {
 
     @Query("SELECT * FROM identities WHERE id = :id")
     suspend fun byId(id: String): IdentityEntity?
+
+    @Query("SELECT * FROM identities")
+    suspend fun allOnce(): List<IdentityEntity>
 
     @Upsert
     suspend fun upsert(identity: IdentityEntity)
@@ -157,6 +163,9 @@ interface KnownHostDao {
     @Query("SELECT * FROM known_hosts WHERE host = :host AND port = :port")
     suspend fun allFor(host: String, port: Int): List<KnownHostEntity>
 
+    @Query("SELECT * FROM known_hosts")
+    suspend fun allOnce(): List<KnownHostEntity>
+
     @Upsert
     suspend fun upsert(entry: KnownHostEntity)
 }
@@ -165,6 +174,9 @@ interface KnownHostDao {
 interface SnippetDao {
     @Query("SELECT * FROM snippets ORDER BY sortOrder, createdAt")
     fun all(): Flow<List<SnippetEntity>>
+
+    @Query("SELECT * FROM snippets")
+    suspend fun allOnce(): List<SnippetEntity>
 
     @Upsert
     suspend fun upsert(snippet: SnippetEntity)
@@ -180,6 +192,9 @@ interface PortForwardDao {
 
     @Query("SELECT * FROM port_forwards WHERE hostId = :hostId ORDER BY createdAt")
     suspend fun forHost(hostId: String): List<PortForwardEntity>
+
+    @Query("SELECT * FROM port_forwards")
+    suspend fun allOnce(): List<PortForwardEntity>
 
     @Upsert
     suspend fun upsert(forward: PortForwardEntity)

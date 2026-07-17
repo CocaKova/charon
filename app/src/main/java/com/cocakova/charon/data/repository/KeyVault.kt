@@ -112,6 +112,54 @@ class KeyVault(private val dao: IdentityDao) {
     }
 
     /**
+     * Land an identity from a reliquary import, keeping its UUID and stamps so the
+     * merge law stays honest. The material is re-sealed under *this* device's
+     * Keystore — through the biometric gate when the identity carries one, which
+     * costs a fingerprint right here. Returns false when the prompt was refused or
+     * the gate can't exist (no biometric enrolled): the key stays ashore, reported,
+     * never silently downgraded to an ungated seal.
+     */
+    suspend fun restore(
+        id: String,
+        name: String,
+        keyType: String,
+        publicLine: String,
+        fingerprint: String,
+        privateKey: String,
+        passphrase: String?,
+        biometric: Boolean,
+        createdAt: Long,
+        lastModified: Long,
+    ): Boolean {
+        val envelope = KeyEnvelope.pack(privateKey, passphrase)
+        val sealed = if (!biometric) {
+            SecretVault.seal(envelope)
+        } else {
+            val cipher = try {
+                SecretVault.bioEncryptCipher()
+            } catch (e: Exception) {
+                return false
+            }
+            val authed = awaitBio("seal “${name}”", cipher) ?: return false
+            SecretVault.sealWith(authed, envelope)
+        }
+        dao.upsert(
+            IdentityEntity(
+                id = id,
+                name = name,
+                keyType = keyType,
+                publicLine = publicLine,
+                fingerprint = fingerprint,
+                materialSealed = sealed,
+                biometricGated = biometric,
+                createdAt = if (createdAt > 0) createdAt else System.currentTimeMillis(),
+                lastModified = lastModified,
+            ),
+        )
+        return true
+    }
+
+    /**
      * Unseal an identity's private material. Blocks on a fingerprint for gated
      * keys; null means the user dismissed the prompt (abort, no error).
      */

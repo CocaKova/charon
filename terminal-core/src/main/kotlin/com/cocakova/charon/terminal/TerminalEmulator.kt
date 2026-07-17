@@ -86,6 +86,13 @@ class TerminalEmulator(
     var title = ""
         private set
 
+    /**
+     * OSC 133 semantic-prompt relay: (kind, extra) where kind ∈ A/B/C/D and extra
+     * is D's exit code when the shell sent one. Mutable so hosts can wire it
+     * without touching the constructor; invoked from the writer's thread.
+     */
+    var onShellMark: ((Char, Int?) -> Unit)? = null
+
     /** Bumped on every visible mutation; renderers conflate on this. */
     var generation = 0L
         private set
@@ -317,6 +324,17 @@ class TerminalEmulator(
             }
             110 -> defaultFg = initialFg
             111 -> defaultBg = initialBg
+            // OSC 133 shell integration (semantic prompts): A = prompt start,
+            // B = prompt end, C = command output begins, D[;exit] = command done.
+            // The emulator only relays the marks; meaning lives with the session.
+            133 -> {
+                val kind = arg.firstOrNull()
+                if (kind != null) {
+                    val extra = arg.substringAfter(';', "")
+                        .takeWhile { it.isDigit() }.toIntOrNull()
+                    onShellMark?.invoke(kind, extra)
+                }
+            }
             else -> {} // OSC 52 clipboard lands in v0.4 behind consent
         }
         touch()

@@ -1,12 +1,14 @@
 package com.cocakova.charon.presentation.dock
 
 import android.text.format.DateUtils
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,9 +58,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -72,11 +80,13 @@ import com.cocakova.charon.fleet.Sounding
 import com.cocakova.charon.theme.WarnEmber
 import com.cocakova.charon.presentation.components.StyxCrossing
 import com.cocakova.charon.presentation.keys.KeysSheet
+import com.cocakova.charon.presentation.vault.ReliquarySheet
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.theme.DeepTeal
 import kotlinx.coroutines.delay
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.StyxTeal
+import kotlin.math.sin
 
 /**
  * The Dock: the landing surface. Saved crossings as moorings over the sea;
@@ -113,6 +123,7 @@ fun DockScreen(
 
     var showKeys by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showReliquary by remember { mutableStateOf(false) }
     var showFleet by remember { mutableStateOf(false) }
     var quickActions by remember { mutableStateOf<HostEntity?>(null) }
 
@@ -132,6 +143,15 @@ fun DockScreen(
             }
         }
     }
+    // One clock lights every lantern on the Dock: each card reads this inside its
+    // draw phase (never in composition) at its own phase offset, so the whole fleet
+    // flickers asynchronously off a single animation instead of one per card.
+    val lanternClock = rememberInfiniteTransition(label = "lanterns").animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing)),
+        label = "lanternClock",
+    )
     var query by rememberSaveable { mutableStateOf("") }
     // Harbors the user has folded shut. Ephemeral by design — a fresh launch shows
     // the whole fleet.
@@ -163,9 +183,13 @@ fun DockScreen(
         Box(Modifier.fillMaxWidth()) {
             Text(
                 "CHARON",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    // Letter-spaced like an inscription, with the water's glow behind it.
+                    letterSpacing = 7.sp,
+                    shadow = Shadow(color = StyxTeal.copy(alpha = 0.55f), blurRadius = 22f),
+                ),
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier.align(Alignment.Center).padding(start = 7.dp),
             )
             IconButton(
                 onClick = { showKeys = true },
@@ -222,6 +246,7 @@ fun DockScreen(
                 leadingIcon = {
                     Icon(Icons.Outlined.Search, contentDescription = null, tint = MistGrey)
                 },
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp),
@@ -265,6 +290,7 @@ fun DockScreen(
                         MooringCard(
                             host = host,
                             sounding = soundings[host.id],
+                            lanternClock = lanternClock,
                             enabled = !connecting,
                             onCross = { onConnect(host) },
                             onEdit = { editing = EditTarget.Existing(host) },
@@ -342,7 +368,14 @@ fun DockScreen(
     }
 
     if (showSettings) {
-        SettingsSheet(onDismiss = { showSettings = false })
+        SettingsSheet(
+            onDismiss = { showSettings = false },
+            onReliquary = { showSettings = false; showReliquary = true },
+        )
+    }
+
+    if (showReliquary) {
+        ReliquarySheet(onDismiss = { showReliquary = false })
     }
 
     if (showFleet) {
@@ -520,6 +553,19 @@ private fun HarborHeader(
             style = MaterialTheme.typography.labelMedium,
             color = MistGrey,
         )
+        Spacer(Modifier.width(12.dp))
+        // A waterline trailing off into the dark — gives each harbor its own horizon.
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(DeepTeal.copy(alpha = 0.55f), Color.Transparent),
+                    ),
+                ),
+        )
+        Spacer(Modifier.width(4.dp))
     }
 }
 
@@ -528,6 +574,7 @@ private fun HarborHeader(
 private fun MooringCard(
     host: HostEntity,
     sounding: Sounding?,
+    lanternClock: State<Float>,
     enabled: Boolean,
     onCross: () -> Unit,
     onEdit: () -> Unit,
@@ -538,13 +585,24 @@ private fun MooringCard(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val give by animateFloatAsState(if (pressed) 0.98f else 1f, tween(120), label = "give")
+    val cardShape = RoundedCornerShape(14.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .scale(give)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(cardShape)
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            // The border catches light at the top and falls off into the water below.
+            .border(
+                1.dp,
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                    ),
+                ),
+                cardShape,
+            )
             .combinedClickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -555,26 +613,29 @@ private fun MooringCard(
             .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Mooring lantern: the host's colour tag stays full-strength so colour-coding
-        // reads at a glance even for offline hosts — reachability rides on top of it,
-        // never over it. Answering water = a teal-tinted halo around the flame; dark
-        // water = a WarnEmber tick at its foot; unsounded = just the flame.
+        // Mooring lantern: a flame that actually burns. The host's colour tag stays
+        // full-strength so colour-coding reads at a glance even for offline hosts —
+        // reachability rides on top of it, never over it. Answering water = a bright
+        // halo; dark water = a WarnEmber tick at its foot; unsounded = a low flame.
+        // The flicker reads the shared clock inside the draw phase only, at a phase
+        // offset hashed from the host id, so every lantern burns to its own wind.
         val lantern = lanternColor(host.colorHex)
-        Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
-            if (sounding?.reach == Reach.REACHABLE) {
-                Box(
-                    Modifier
-                        .size(16.dp)
-                        .clip(CircleShape)
-                        .background(lantern.copy(alpha = 0.28f)),
+        val flameCore = lerp(lantern, Color.White, 0.45f)
+        val reachable = sounding?.reach == Reach.REACHABLE
+        val phase = remember(host.id) { (host.id.hashCode() and 0xFFFF) / 65535f * 6.2832f }
+        Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(18.dp)) {
+                val f = 0.5f + 0.5f * sin(lanternClock.value + phase)
+                val glowAlpha = if (reachable) 0.30f + 0.16f * f else 0.12f + 0.07f * f
+                drawCircle(
+                    Brush.radialGradient(
+                        listOf(lantern.copy(alpha = glowAlpha), Color.Transparent),
+                    ),
+                    radius = size.minDimension / 2f,
                 )
+                drawCircle(lantern, radius = 4.dp.toPx() * (0.93f + 0.07f * f))
+                drawCircle(flameCore.copy(alpha = 0.6f + 0.4f * f), radius = 1.7.dp.toPx())
             }
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(lantern),
-            )
             if (sounding?.reach == Reach.UNREACHABLE) {
                 Box(
                     Modifier
