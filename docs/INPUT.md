@@ -79,12 +79,16 @@ Long-press reaches the shifted mate the soft keyboard buries:
 
 ### Auto-repeat
 
-`↑ ↓ ← →` and `pgup`/`pgdn` repeat while held: a clean tap fires on the
-up-stroke, a still hold starts repeating after 400 ms at 60 ms per step (a
-`LaunchedEffect` keyed on a pressed flag the gesture toggles). The gesture is
-**swipe-proof**: moving past touch slop, or the row's own scroll consuming the
-pointer (watched in the `Final` pass), cancels without typing — so a keyboard
-glide or a row fling crossing an arrow key can't recall history lines.
+`↑ ↓ ← →` and `pgup`/`pgdn` repeat while held: a tap fires on the up-stroke, a
+still hold starts repeating after 400 ms at 60 ms per step (a `LaunchedEffect`
+keyed on a pressed flag the gesture toggles). The gesture is **swipe-proof
+without being tap-hostile** — drift *within* the key never cancels (thumbs roll
+15–25 px on fast taps; a keyboard that drops rolled taps feels broken). What
+cancels is structural, watched in the `Final` pass: the pointer leaving the key
+bounds (+12 dp margin) — a glide crossing the row, or the key sliding out from
+beneath a stationary finger — or the row genuinely taking the pointer for a
+scroll, measured as accrued *consumed displacement* past touch slop (merely
+stopping a fling consumes an honest tap's micro-moves, and must not eat it).
 
 ### Fn page
 
@@ -104,6 +108,16 @@ Three blended sources, ranked in this order:
 
 1. **Your history** (`CommandHistory`, prefs `charon_history`, cap 300, deduped) —
    full past lines that continue the draft; the most personal signal, first.
+   History only learns **command lines** (`CommandGate`): a line's first token must
+   be an executable the host actually has (the PATH inventory), a shell
+   keyword/builtin, a path invocation, a variable, or an env assignment — an
+   unknown token (alias, function, inventory not landed) passes only when the line
+   is *shaped* like an invocation (short, or carrying option/path/operator
+   characters). Sentences typed into a chat or REPL running on the host never
+   enter the history, and the same gate screens what's already stored before it
+   may suggest (so lines recorded before the gate existed stay silent). The gate
+   is deliberately **not** tied to the alternate screen: tmux runs its shells
+   there, and per-host tmux auto-attach is the default workflow.
 2. **Command grammar** (`Specs`) — curated specs for the tools a homelab hand
    actually types (tmux, git, docker, systemctl, journalctl, apt, ssh…):
    subcommands, common flags, and *which* flag/positional takes which dynamic value.
@@ -114,10 +128,33 @@ Three blended sources, ranked in this order:
    `docker ps` names, systemd units. So `tm` offers `tmux` because the host *has*
    it, and `tmux attach -t ` offers the sessions running *right now*. Probes are
    best-effort with timeouts; a missing tool = an empty list, never an error.
+   A **failed** probe caches nothing (the next request retries) — only a real
+   answer counts. Dynamic kinds are **closed-world** (tmux sessions, containers,
+   units — the probe IS the universe) or **open-world** (ssh targets from the
+   remote's own `~/.ssh/config` — a helpful subset). Once a closed-world kind
+   has answered, the live host is the authority: in that value position history
+   recall is suppressed entirely, so a dead session name from last week can
+   never outrank — or even sit beside — the sessions that exist right now.
+   Open-world kinds keep history beside them. The exec read itself is
+   deadline-polled (never block-to-EOF; the old read made the join timeout dead
+   code), so a wedged probe can't strand its kind for the whole session.
+4. **Remote paths** — any token starting `/` or `~/` completes from a live
+   `ls -1Ap` of its directory (dotfiles included, 15 s TTL, last 8 directories
+   cached), in any argument position, for any command, spec'd or not.
+   Directories cascade (`etc/` keeps completing into the next level); files
+   close the token with a space. Absolute and `~/` only — the two shapes
+   knowable without tracking the shell's cwd; relative paths await OSC 7 shell
+   integration (FRONTIER). `ssh`/`scp`/`sftp`/`rsync` also complete
+   `user@host` — the user half is yours, the host half matches the remote's
+   ssh book.
 
 The flow: `tm` → `tmux` → (space cascades) `attach` `new` `ls`… → `-t` → your
-actual session names. `sudo` is transparent — what follows completes as a fresh
-command.
+actual session names. Completion follows the shell's own structure: `sudo`,
+`doas`, and env assignments are transparent prefixes, and only the segment after
+the last `&&`/`||`/`|`/`;` completes as a fresh command (`ssh spark && tm` →
+`tmux`). It's built to run on every keystroke: the inventory keeps a pre-built
+set for membership and a sorted list for binary-searched prefix runs, and the
+history is gate-screened once per change, not per key.
 
 - **How it knows the line** — `TerminalSession.trackInput` reconstructs the command
   being typed from the *outgoing* bytes (fed only from genuine user input: `emit`

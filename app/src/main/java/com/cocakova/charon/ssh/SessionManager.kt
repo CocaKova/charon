@@ -3,6 +3,7 @@ package com.cocakova.charon.ssh
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import com.cocakova.charon.autocomplete.CommandGate
 import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.data.db.HostDao
 import com.cocakova.charon.data.db.KnownHostDao
@@ -125,9 +126,15 @@ class SessionManager(
             initialFg = scheme.fg,
             initialBg = scheme.bg,
         )
-        session.onCommandSubmitted = { commandHistory.record(it) }
         val ms = Managed(session, config, hostId)
         ms.remote = RemoteContext(scope) { cmd -> ms.connection?.exec(cmd) }
+        // Only genuine command lines reach the shared history: a sentence typed into
+        // a chat or REPL running on the host must never resurface as autofill.
+        session.onCommandSubmitted = { line ->
+            if (CommandGate.isCommandLine(line, ms.remote?.commandSet.orEmpty())) {
+                commandHistory.record(line)
+            }
+        }
         managed[session.id] = ms
         lastError.value = null
         sessions.update { it + session }

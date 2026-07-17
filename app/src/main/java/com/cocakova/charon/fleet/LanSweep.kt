@@ -1,12 +1,7 @@
 package com.cocakova.charon.fleet
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -87,26 +82,19 @@ object LanSweep {
         resolve: (String) -> String? = ::reverseName,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): List<SweepFind> = withContext(Dispatchers.IO) {
-        val targets = candidates(ownIp)
-        val gate = Semaphore(MAX_PARALLEL_DIALS)
+        val progressLock = Any()
         var dialed = 0
         var found = 0
-        val finds = coroutineScope {
-            targets.map { ip ->
-                async {
-                    gate.withPermit {
-                        val open = runCatching { dial(ip, SSH_PORT, DIAL_TIMEOUT_MS) }
-                            .getOrNull() != null
-                        synchronized(gate) {
-                            dialed++
-                            if (open) found++
-                            onProgress(dialed, found)
-                        }
-                        if (open) ip else null
-                    }
-                }
-            }.awaitAll().filterNotNull()
-        }
+        val finds = dialMany(candidates(ownIp), MAX_PARALLEL_DIALS) { ip ->
+            val open = runCatching { dial(ip, SSH_PORT, DIAL_TIMEOUT_MS) }
+                .getOrNull() != null
+            synchronized(progressLock) {
+                dialed++
+                if (open) found++
+                onProgress(dialed, found)
+            }
+            if (open) ip else null
+        }.filterNotNull()
         // Names only for the ships that answered — reverse DNS on 254 addrs would
         // stall the sweep for nothing.
         finds.map { ip -> SweepFind(ip = ip, hostname = resolve(ip)) }

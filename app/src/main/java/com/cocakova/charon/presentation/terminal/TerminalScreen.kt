@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
+import com.cocakova.charon.autocomplete.CommandGate
 import com.cocakova.charon.autocomplete.Completer
 import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.autocomplete.RemoteContext
@@ -130,10 +131,20 @@ fun TerminalScreen(
     var alt by remember { mutableStateOf(Sticky.OFF) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
     val inputFocus = remember { FocusRequester() }
-    val prefs = LocalContext.current.getSharedPreferences("charon", Context.MODE_PRIVATE)
-    // Pinch-zoomable font size, persisted; clamped to a legible band.
+    val context = LocalContext.current
+    val prefs = remember(context) { context.getSharedPreferences("charon", Context.MODE_PRIVATE) }
+    // Pinch-zoomable font size, persisted; clamped to a legible band. The write is
+    // debounced — a pinch storms dozens of ticks per second and each restart of the
+    // effect cancels the last pending write — with a flush on leave so the settled
+    // size survives even a mid-gesture exit.
     var fontSizeSp by remember { mutableFloatStateOf(prefs.getFloat("font_size", 14f)) }
-    LaunchedEffect(fontSizeSp) { prefs.edit().putFloat("font_size", fontSizeSp).apply() }
+    LaunchedEffect(fontSizeSp) {
+        delay(250)
+        prefs.edit().putFloat("font_size", fontSizeSp).apply()
+    }
+    DisposableEffect(Unit) {
+        onDispose { prefs.edit().putFloat("font_size", fontSizeSp).apply() }
+    }
     var inputMode by remember {
         mutableStateOf(
             if (prefs.getString("input_mode", "predictive") == "raw") TerminalInputView.Mode.RAW
@@ -179,7 +190,7 @@ fun TerminalScreen(
 
     // Keep the screen lit at sea (opt-in from the helm): a terminal you're watching
     // shouldn't doze mid-tail. The flag lifts the moment the terminal leaves.
-    val activityWindow = (LocalContext.current as? android.app.Activity)?.window
+    val activityWindow = (context as? android.app.Activity)?.window
     DisposableEffect(activityWindow) {
         if (prefs.getBoolean("keep_screen_on", false)) {
             activityWindow?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -196,8 +207,16 @@ fun TerminalScreen(
     val history by commandHistory.entries.collectAsState()
     val ctxVersion by (remoteContext?.version ?: remember { kotlinx.coroutines.flow.MutableStateFlow(0) })
         .collectAsState()
-    val suggestions = remember(draft, history, ctxVersion) {
-        Completer.complete(draft, history, remoteContext)
+    // History the strip may draw on: command lines only, judged against the host's
+    // own inventory — prose that slipped into the store (recorded into a remote
+    // chat/REPL before the gate existed, or before the inventory landed) never
+    // suggests back. Screened once per history/inventory change, not per keystroke.
+    val cleanHistory = remember(history, ctxVersion) {
+        val installed = remoteContext?.commandSet.orEmpty()
+        history.filter { CommandGate.isCommandLine(it, installed) }
+    }
+    val suggestions = remember(draft, cleanHistory, ctxVersion) {
+        Completer.complete(draft, cleanHistory, remoteContext)
     }
 
     // Charted channels sheet, raised from the switcher's ⇆.
@@ -643,12 +662,15 @@ private fun Waterline() {
         label = "waterlinePhase",
     )
     val still = MaterialTheme.colorScheme.surfaceVariant
+    // One Path for the ripple's whole life — this draws every frame forever, and a
+    // fresh allocation per frame is pure garbage-collector chum.
+    val path = remember { Path() }
     Canvas(Modifier.fillMaxWidth().height(4.dp)) {
         val mid = size.height / 2f
         val amp = size.height * 0.32f
         val wavelength = 26.dp.toPx()
         val step = 3.dp.toPx()
-        val path = Path()
+        path.reset()
         var x = 0f
         path.moveTo(0f, mid + amp * sin(-phase))
         while (x < size.width + step) {
@@ -682,18 +704,22 @@ private fun SessionTab(
         animationSpec = tween(400),
         label = "tabDot",
     )
-    val breathe by rememberInfiniteTransition(label = "breathe").animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1300, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "breatheAlpha",
-    )
     // Breathe while connected; pulse while redialing — anything settled holds steady.
+    // The infinite transition only exists while a dot actually breathes: idle tabs
+    // must not each keep an always-running animation invalidating frames.
     val dotAlpha = when (state) {
-        is TerminalSession.State.Connected, is TerminalSession.State.Reconnecting -> breathe
+        is TerminalSession.State.Connected, is TerminalSession.State.Reconnecting -> {
+            val breathe by rememberInfiniteTransition(label = "breathe").animateFloat(
+                initialValue = 0.45f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1300, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "breatheAlpha",
+            )
+            breathe
+        }
         else -> 1f
     }
 

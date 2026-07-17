@@ -1,16 +1,9 @@
 package com.cocakova.charon.fleet
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -49,19 +42,12 @@ class FleetWatch(
      * socket storm), publishing each result as it lands — dots light one by one
      * rather than all at once when the slowest timeout expires.
      */
-    suspend fun soundAll(targets: List<SoundingTarget>) = withContext(Dispatchers.IO) {
-        val gate = Semaphore(MAX_PARALLEL_DIALS)
-        coroutineScope {
-            targets.map { target ->
-                async {
-                    gate.withPermit {
-                        val latency = runCatching {
-                            dial(target.host, target.port, DIAL_TIMEOUT_MS)
-                        }.getOrNull()
-                        record(target.id, latency)
-                    }
-                }
-            }.awaitAll()
+    suspend fun soundAll(targets: List<SoundingTarget>) {
+        dialMany(targets, MAX_PARALLEL_DIALS) { target ->
+            val latency = runCatching {
+                dial(target.host, target.port, DIAL_TIMEOUT_MS)
+            }.getOrNull()
+            record(target.id, latency)
         }
         // Moorings deleted since the last pass drop out of the chart.
         val known = targets.mapTo(HashSet()) { it.id }

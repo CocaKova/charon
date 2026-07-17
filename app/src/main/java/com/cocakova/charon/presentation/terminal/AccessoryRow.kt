@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -214,10 +215,14 @@ private fun AccessoryKey(
     )
 
     // Repeatable keys drive the auto-repeat from a LaunchedEffect keyed on a pressed
-    // flag the gesture toggles. The gesture is deliberately swipe-proof: a keyboard
-    // glide or a row-scroll that crosses the key must not type — so a clean tap fires
-    // on the up-stroke (within touch slop), a still hold starts the repeat, and any
-    // slop-breaking movement or a scroll consuming the pointer cancels outright.
+    // flag the gesture toggles. The gesture is swipe-proof without being tap-hostile:
+    // a tap fires on the up-stroke as long as the pointer stayed on the key — thumbs
+    // roll 15–25px on fast taps and a keyboard that drops rolled taps feels broken,
+    // so drift *within* the key never cancels. What does cancel is structural: the
+    // pointer leaving the key (a glide crossing the row, or the key sliding away
+    // beneath a stationary finger), or the row genuinely taking the pointer for a
+    // scroll — measured as accrued consumed displacement, because merely stopping a
+    // fling consumes the micro-moves of a perfectly honest tap.
     val haptic = LocalHapticFeedback.current
     var held by remember { mutableStateOf(false) }
     var holdFired by remember { mutableStateOf(false) }
@@ -243,25 +248,36 @@ private fun AccessoryKey(
                 val down = awaitFirstDown(requireUnconsumed = false)
                 holdFired = false
                 held = true
-                var cancelled = false
+                val margin = 12.dp.toPx()
+                var scrolled = 0f
+                var fire = false
                 while (true) {
                     // Watch in the Final pass so the scroll row's consumption is
                     // visible — a horizontal fling scrolls keys under a stationary
                     // finger without ever breaking slop locally.
                     val event = awaitPointerEvent(PointerEventPass.Final)
-                    val ch = event.changes.firstOrNull { it.id == down.id }
-                    if (ch == null || ch.isConsumed) {
-                        cancelled = true
+                    val ch = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (ch.isConsumed) {
+                        // Only a scroll that actually moved cancels; a fling-stop
+                        // consumes a tap's micro-moves with next to no displacement.
+                        scrolled += ch.positionChangeIgnoreConsumed().getDistance()
+                        if (scrolled > viewConfiguration.touchSlop) break
+                    }
+                    // Position is in the key's own space, so this also catches the
+                    // key sliding out from beneath a stationary finger.
+                    val p = ch.position
+                    if (p.x < -margin || p.y < -margin ||
+                        p.x > size.width + margin || p.y > size.height + margin
+                    ) {
                         break
                     }
-                    if (!ch.pressed) break
-                    if ((ch.position - down.position).getDistance() > viewConfiguration.touchSlop) {
-                        cancelled = true
+                    if (!ch.pressed) {
+                        fire = true
                         break
                     }
                 }
                 held = false
-                if (!cancelled && !holdFired) {
+                if (fire && !holdFired) {
                     haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                     onPress()
                 }

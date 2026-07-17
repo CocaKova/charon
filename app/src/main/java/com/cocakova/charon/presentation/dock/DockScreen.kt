@@ -594,8 +594,7 @@ private fun MooringCard(
             )
             Text(
                 buildString {
-                    append("${host.username}@${host.host}")
-                    if (host.port != 22) append(":${host.port}")
+                    append(host.address)
                     // Last-crossed stays put; the live round-trip rides alongside it
                     // so a reachability flap never erases the timestamp.
                     if (host.lastConnectedAt > 0L) {

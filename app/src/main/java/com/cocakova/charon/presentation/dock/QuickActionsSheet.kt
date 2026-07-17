@@ -61,10 +61,9 @@ fun QuickActionsSheet(
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     var armedRelease by remember { mutableStateOf(false) }
-    val address = buildString {
-        append("${host.username}@${host.host}")
-        if (host.port != 22) append(":${host.port}")
-    }
+
+    // Most actions leave the sheet behind before they act.
+    fun dismissThen(action: () -> Unit): () -> Unit = { onDismiss(); action() }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)) {
@@ -83,7 +82,7 @@ fun QuickActionsSheet(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        address,
+                        host.address,
                         style = MaterialTheme.typography.bodySmall,
                         color = MistGrey,
                     )
@@ -100,26 +99,26 @@ fun QuickActionsSheet(
             Text(soundingText, style = MaterialTheme.typography.bodySmall, color = soundingColor)
             Spacer(Modifier.height(14.dp))
 
-            QuickAction("cross", "board the ferry to this mooring", StyxTeal) {
-                onDismiss(); onCross()
-            }
+            QuickAction("cross", "board the ferry to this mooring", StyxTeal, dismissThen(onCross))
             if (liveSessionId != null) {
-                QuickAction("step aboard", "a crossing is already underway", StyxTeal) {
-                    onDismiss(); onStepAboard(liveSessionId)
-                }
-                QuickAction("the hold", "browse this ship's files", ObolGold) {
-                    onDismiss(); onOpenHold(liveSessionId)
-                }
+                QuickAction(
+                    "step aboard", "a crossing is already underway", StyxTeal,
+                    dismissThen { onStepAboard(liveSessionId) },
+                )
+                QuickAction(
+                    "the hold", "browse this ship's files", ObolGold,
+                    dismissThen { onOpenHold(liveSessionId) },
+                )
             }
-            QuickAction("copy address", address, MaterialTheme.colorScheme.onSurface) {
-                clipboard.setText(AnnotatedString(address))
+            QuickAction("copy address", host.address, MaterialTheme.colorScheme.onSurface) {
+                clipboard.setText(AnnotatedString(host.address))
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 onDismiss()
             }
-            QuickAction("edit the mooring", "name, harbor, lantern, keys…",
-                MaterialTheme.colorScheme.onSurface) {
-                onDismiss(); onEdit()
-            }
+            QuickAction(
+                "edit the mooring", "name, harbor, lantern, keys…",
+                MaterialTheme.colorScheme.onSurface, dismissThen(onEdit),
+            )
             QuickAction(
                 if (armedRelease) "tap again to release" else "release the mooring",
                 if (armedRelease) "this forgets the saved crossing" else "remove from the Dock",

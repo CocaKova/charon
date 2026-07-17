@@ -296,6 +296,9 @@ class TerminalSession(
     }
 
     private fun commitLine() {
+        // Deliberately NOT gated on the alternate screen: tmux runs its shells
+        // there, and tmux auto-attach is the default workflow. CommandGate (at the
+        // recording end) is what keeps non-command lines out of history.
         if (lineTrusted) {
             val cmd = lineBuf.toString().trim()
             if (cmd.isNotEmpty()) {

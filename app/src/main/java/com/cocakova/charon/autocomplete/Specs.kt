@@ -3,15 +3,22 @@ package com.cocakova.charon.autocomplete
 /**
  * What a dynamic argument completes to — resolved live against the connected host
  * by [RemoteContext] (running tmux sessions, docker containers…), never hard-coded.
+ *
+ * [closedWorld] marks kinds whose probe answer IS the whole universe of valid
+ * values (the sessions that run, the containers that exist): there, the live host
+ * outranks and silences stale history. Open-world kinds (ssh targets) are only a
+ * helpful subset — history stays a legitimate voice beside them.
  */
-enum class ArgKind {
-    NONE,
+enum class ArgKind(val closedWorld: Boolean) {
+    NONE(false),
     /** Names of running/attachable tmux sessions on the host. */
-    TMUX_SESSION,
+    TMUX_SESSION(true),
     /** Names of running docker containers. */
-    DOCKER_CONTAINER,
+    DOCKER_CONTAINER(true),
     /** systemd service unit names. */
-    SYSTEMD_UNIT,
+    SYSTEMD_UNIT(true),
+    /** Host aliases from the remote's own ~/.ssh/config (you ssh onward *from* it). */
+    SSH_HOST(false),
 }
 
 /**
@@ -58,6 +65,9 @@ object Specs {
                 Spec("branch", flags = listOf("-a", "-d")), Spec("log", flags = listOf("--oneline", "-p")),
                 Spec("diff", flags = listOf("--staged")), Spec("stash", subs = listOf(Spec("pop"), Spec("list"))),
                 Spec("clone"), Spec("reset", flags = listOf("--hard", "--soft")), Spec("rebase"),
+                Spec("remote", subs = listOf(Spec("-v"), Spec("add"), Spec("set-url"))),
+                Spec("tag"), Spec("cherry-pick"), Spec("show"),
+                Spec("worktree", subs = listOf(Spec("add"), Spec("list"), Spec("remove"))),
             ),
         ),
         Spec(
@@ -78,6 +88,7 @@ object Specs {
                     subs = listOf(
                         Spec("up", flags = listOf("-d", "--build")), Spec("down"),
                         Spec("ps"), Spec("logs", flags = listOf("-f")), Spec("restart"), Spec("pull"),
+                        Spec("exec"), Spec("build"),
                     ),
                 ),
                 Spec("pull"), Spec("build", flags = listOf("-t")), Spec("system", subs = listOf(Spec("prune"), Spec("df"))),
@@ -93,7 +104,10 @@ object Specs {
                 Spec("enable", argKind = ArgKind.SYSTEMD_UNIT),
                 Spec("disable", argKind = ArgKind.SYSTEMD_UNIT),
                 Spec("daemon-reload"),
+                Spec("is-active", argKind = ArgKind.SYSTEMD_UNIT),
+                Spec("cat", argKind = ArgKind.SYSTEMD_UNIT),
                 Spec("list-units", flags = listOf("--failed", "--type=service")),
+                Spec("list-timers"),
             ),
         ),
         Spec(
@@ -108,8 +122,10 @@ object Specs {
                 Spec("remove"), Spec("autoremove"), Spec("search"), Spec("list", flags = listOf("--installed", "--upgradable")),
             ),
         ),
-        Spec("ssh", flags = listOf("-p", "-i", "-L", "-R", "-D")),
-        Spec("scp", flags = listOf("-r", "-P")),
+        Spec("ssh", flags = listOf("-p", "-i", "-L", "-R", "-D"), argKind = ArgKind.SSH_HOST),
+        Spec("scp", flags = listOf("-r", "-P"), argKind = ArgKind.SSH_HOST),
+        Spec("sftp", flags = listOf("-P", "-i"), argKind = ArgKind.SSH_HOST),
+        Spec("rsync", flags = listOf("-avz", "-a", "--progress", "--delete", "-n"), argKind = ArgKind.SSH_HOST),
         Spec("ping", flags = listOf("-c")),
         Spec("curl", flags = listOf("-s", "-L", "-o", "-X", "-H", "-d")),
         Spec("wget", flags = listOf("-O", "-q")),
