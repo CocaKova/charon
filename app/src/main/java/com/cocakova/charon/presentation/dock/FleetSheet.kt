@@ -20,10 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -52,6 +49,9 @@ import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.fleet.FleetCandidate
 import com.cocakova.charon.fleet.LanSweep
 import com.cocakova.charon.fleet.TailscaleImport
+import com.cocakova.charon.presentation.components.ChoicePill
+import com.cocakova.charon.presentation.components.DropdownChoice
+import com.cocakova.charon.presentation.components.ReadonlyDropdownField
 import com.cocakova.charon.theme.DeepTeal
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
@@ -80,11 +80,10 @@ fun FleetSheet(
 
     // The sightings, however they arrived, and which of them are chosen.
     val sightings = remember { mutableStateListOf<FleetCandidate>() }
-    val chosen = remember { mutableStateListOf<String>() }
+    var chosen by remember { mutableStateOf(setOf<String>()) }
     var username by remember { mutableStateOf("") }
     var port by remember { mutableStateOf("22") }
     var identityId by remember { mutableStateOf<String?>(null) }
-    var identityOpen by remember { mutableStateOf(false) }
     var harbor by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -92,8 +91,7 @@ fun FleetSheet(
 
     fun land(candidates: List<FleetCandidate>) {
         sightings.clear(); sightings.addAll(candidates)
-        chosen.clear()
-        chosen.addAll(candidates.filter { it.host !in existingHosts }.map { it.host })
+        chosen = candidates.filterNot { it.host in existingHosts }.mapTo(LinkedHashSet()) { it.host }
         error = null
     }
 
@@ -114,11 +112,11 @@ fun FleetSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Clearing busy on a mode switch keeps a cancelled finder's coroutine
                 // (its scope dies with the tab) from latching the ask/moor buttons off.
-                WaterPill("the tailnet", tailnetMode) {
-                    tailnetMode = true; sightings.clear(); chosen.clear(); error = null; busy = false
+                ChoicePill("the tailnet", tailnetMode) {
+                    tailnetMode = true; sightings.clear(); chosen = emptySet(); error = null; busy = false
                 }
-                WaterPill("near waters", !tailnetMode) {
-                    tailnetMode = false; sightings.clear(); chosen.clear(); error = null; busy = false
+                ChoicePill("near waters", !tailnetMode) {
+                    tailnetMode = false; sightings.clear(); chosen = emptySet(); error = null; busy = false
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -165,8 +163,8 @@ fun FleetSheet(
                             moored = moored,
                             chosen = ship.host in chosen,
                             onToggle = {
-                                if (ship.host in chosen) chosen.remove(ship.host)
-                                else chosen.add(ship.host)
+                                chosen = if (ship.host in chosen) chosen - ship.host
+                                else chosen + ship.host
                             },
                         )
                     }
@@ -193,33 +191,18 @@ fun FleetSheet(
                 }
                 Spacer(Modifier.height(8.dp))
                 val selectedIdentity = identities.firstOrNull { it.id == identityId }
-                ExposedDropdownMenuBox(
-                    expanded = identityOpen,
-                    onExpandedChange = { if (identities.isNotEmpty()) identityOpen = it },
-                ) {
-                    OutlinedTextField(
-                        value = selectedIdentity?.name ?: "no key — set per mooring later",
-                        onValueChange = {},
-                        readOnly = true,
-                        singleLine = true,
-                        enabled = identities.isNotEmpty(),
-                        label = { Text("key of passage (optional)") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(identityOpen) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    )
-                    ExposedDropdownMenu(expanded = identityOpen, onDismissRequest = { identityOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("no key — set per mooring later", color = MistGrey) },
-                            onClick = { identityId = null; identityOpen = false },
-                        )
-                        identities.forEach { identity ->
-                            DropdownMenuItem(
-                                text = { Text(identity.name) },
-                                onClick = { identityId = identity.id; identityOpen = false },
-                            )
-                        }
-                    }
-                }
+                ReadonlyDropdownField(
+                    value = selectedIdentity?.name ?: "no key — set per mooring later",
+                    label = "key of passage (optional)",
+                    enabled = identities.isNotEmpty(),
+                    choices = listOf(
+                        DropdownChoice("no key — set per mooring later", dim = true) {
+                            identityId = null
+                        },
+                    ) + identities.map { identity ->
+                        DropdownChoice(identity.name) { identityId = identity.id }
+                    },
+                )
                 if (identityId == null) {
                     Text(
                         "no key attached — you'll add a password or key before first crossing",
@@ -286,7 +269,6 @@ private fun TailnetFinder(
 ) {
     val scope = rememberCoroutineScope()
     var source by remember { mutableStateOf(hosts.firstOrNull()) }
-    var sourceOpen by remember { mutableStateOf(false) }
     var pasting by remember { mutableStateOf(false) }
     var pasted by remember { mutableStateOf("") }
 
@@ -298,29 +280,12 @@ private fun TailnetFinder(
     Spacer(Modifier.height(8.dp))
     if (hosts.isNotEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ExposedDropdownMenuBox(
-                expanded = sourceOpen,
-                onExpandedChange = { sourceOpen = it },
+            ReadonlyDropdownField(
+                value = source?.displayName ?: "",
+                label = "who to ask",
+                choices = hosts.map { h -> DropdownChoice(h.displayName) { source = h } },
                 modifier = Modifier.weight(1f),
-            ) {
-                OutlinedTextField(
-                    value = source?.displayName ?: "",
-                    onValueChange = {},
-                    readOnly = true,
-                    singleLine = true,
-                    label = { Text("who to ask") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(sourceOpen) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                )
-                ExposedDropdownMenu(expanded = sourceOpen, onDismissRequest = { sourceOpen = false }) {
-                    hosts.forEach { h ->
-                        DropdownMenuItem(
-                            text = { Text(h.displayName) },
-                            onClick = { source = h; sourceOpen = false },
-                        )
-                    }
-                }
-            }
+            )
             Spacer(Modifier.width(10.dp))
             TextButton(
                 onClick = {
@@ -510,19 +475,4 @@ private fun SightingRow(
             )
         }
     }
-}
-
-/** The two-water toggle pill, matching the helm's mode pills. */
-@Composable
-private fun WaterPill(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (selected) Color.Black else MistGrey,
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) StyxTeal else MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-    )
 }

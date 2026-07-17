@@ -18,9 +18,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -44,6 +44,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.repository.HostDraft
+import com.cocakova.charon.presentation.components.DropdownChoice
+import com.cocakova.charon.presentation.components.ReadonlyDropdownField
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.StyxTeal
 import com.cocakova.charon.theme.WarnEmber
@@ -71,7 +73,6 @@ fun HostEditSheet(
     var username by rememberSaveable(target) { mutableStateOf(existing?.username ?: "") }
     var password by rememberSaveable(target) { mutableStateOf("") }
     var identityId by rememberSaveable(target) { mutableStateOf(existing?.identityId) }
-    var identityMenu by remember { mutableStateOf(false) }
     var harbor by rememberSaveable(target) { mutableStateOf(existing?.harbor ?: "") }
     var harborMenu by remember { mutableStateOf(false) }
     var colorHex by rememberSaveable(target) { mutableStateOf(existing?.colorHex) }
@@ -150,33 +151,17 @@ fun HostEditSheet(
             )
             Spacer(Modifier.height(12.dp))
             val selectedIdentity = identities.find { it.id == identityId }
-            ExposedDropdownMenuBox(
-                expanded = identityMenu,
-                onExpandedChange = { identityMenu = !identityMenu },
-            ) {
-                OutlinedTextField(
-                    value = selectedIdentity?.name ?: "password only",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("identity") },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                )
-                ExposedDropdownMenu(
-                    expanded = identityMenu,
-                    onDismissRequest = { identityMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("password only") },
-                        onClick = { identityId = null; identityMenu = false },
-                    )
-                    identities.forEach { identity ->
-                        DropdownMenuItem(
-                            text = { Text(identity.name + if (identity.biometricGated) "  ·  fingerprint" else "") },
-                            onClick = { identityId = identity.id; identityMenu = false },
-                        )
-                    }
-                }
-            }
+            ReadonlyDropdownField(
+                value = selectedIdentity?.name ?: "password only",
+                label = "identity",
+                choices = listOf(
+                    DropdownChoice("password only") { identityId = null },
+                ) + identities.map { identity ->
+                    DropdownChoice(
+                        identity.name + if (identity.biometricGated) "  ·  fingerprint" else "",
+                    ) { identityId = identity.id }
+                },
+            )
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = password,

@@ -154,7 +154,7 @@ fun KeysSheet(
                             granting = null
                             launchOperation("passage granted") { onGrant(host, identity) }
                         }, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
-                            Text("${host.displayName}  ·  ${host.username}@${host.host}")
+                            Text("${host.displayName}  ·  ${host.address}")
                         }
                     }
                 }

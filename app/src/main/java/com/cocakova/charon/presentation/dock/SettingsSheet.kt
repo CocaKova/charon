@@ -1,8 +1,6 @@
 package com.cocakova.charon.presentation.dock
 
 import android.content.Context
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -28,11 +25,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cocakova.charon.presentation.components.ChoicePill
 import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.MistGrey
 import com.cocakova.charon.theme.ObolGold
@@ -139,12 +136,12 @@ fun SettingsSheet(onDismiss: () -> Unit) {
                         color = MistGrey,
                     )
                 }
-                ModePill("abc", selected = !rawDefault) {
+                ChoicePill("abc", selected = !rawDefault) {
                     rawDefault = false
                     prefs.edit().putString("input_mode", "predictive").apply()
                 }
                 Spacer(Modifier.width(6.dp))
-                ModePill("raw", selected = rawDefault, selectedColor = ObolGold) {
+                ChoicePill("raw", selected = rawDefault, selectedColor = ObolGold) {
                     rawDefault = true
                     prefs.edit().putString("input_mode", "raw").apply()
                 }
@@ -180,30 +177,4 @@ fun SettingsSheet(onDismiss: () -> Unit) {
             }
         }
     }
-}
-
-/** A small abc/raw choice pill, matching the accessory row's toggle language. */
-@Composable
-private fun ModePill(
-    label: String,
-    selected: Boolean,
-    selectedColor: androidx.compose.ui.graphics.Color = StyxTeal,
-    onClick: () -> Unit,
-) {
-    Text(
-        label,
-        fontFamily = CharonMono,
-        fontSize = 13.sp,
-        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        color = if (selected) MaterialTheme.colorScheme.onPrimary
-        else MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
-            .background(
-                if (selected) selectedColor
-                else MaterialTheme.colorScheme.surfaceVariant,
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
 }

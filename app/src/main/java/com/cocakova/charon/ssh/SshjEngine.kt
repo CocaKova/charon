@@ -185,12 +185,36 @@ class SshjEngine : SshEngine {
 
                 override fun exec(command: String, timeoutSeconds: Int): String? = runCatching {
                     // A sibling channel on the live transport: invisible to the PTY.
+                    // The read is deadline-polled, never a block-to-EOF: this channel
+                    // shares the interactive session's socket (client.timeout must
+                    // stay 0), and a probe that wedges would otherwise hang the read
+                    // forever — with RemoteContext's in-flight latch never clearing,
+                    // that argument kind would never be probed again all session.
                     val probe = client.startSession()
                     try {
                         val cmd = probe.exec(command)
-                        val out = cmd.inputStream.bufferedReader().readText()
-                        cmd.join(timeoutSeconds.toLong(), TimeUnit.SECONDS)
-                        out
+                        val stream = cmd.inputStream
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        val deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L
+                        while (System.nanoTime() < deadline && out.size() < MAX_PROBE_BYTES) {
+                            val avail = stream.available()
+                            if (avail > 0) {
+                                val n = stream.read(buf, 0, minOf(buf.size, avail))
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                            } else if (cmd.isOpen) {
+                                Thread.sleep(20)
+                            } else {
+                                // Channel closed — reads now return buffered bytes
+                                // or -1 without blocking.
+                                val n = stream.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                            }
+                        }
+                        if (System.nanoTime() >= deadline && cmd.isOpen) null // wedged: report failure
+                        else out.toString(Charsets.UTF_8.name())
                     } finally {
                         runCatching { probe.close() }
                     }
@@ -305,6 +329,10 @@ class SshjEngine : SshEngine {
         /** Read bound for a one-shot errand — long enough for a slow tailnet RTT,
          *  short enough that a wedged command doesn't strand the caller. */
         private const val ONE_SHOT_TIMEOUT_S = 25
+
+        /** Output cap for a silent probe (`compgen -c` on a busy host runs ~60 KB;
+         *  anything past this is a runaway command, not an inventory). */
+        private const val MAX_PROBE_BYTES = 512 * 1024
     }
 }
 

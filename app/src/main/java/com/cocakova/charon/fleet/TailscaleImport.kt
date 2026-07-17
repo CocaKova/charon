@@ -1,9 +1,9 @@
 package com.cocakova.charon.fleet
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /** One ship sighted on the tailnet, offered for mooring. */
 data class FleetCandidate(
@@ -28,17 +28,15 @@ object TailscaleImport {
 
     /** @throws IllegalArgumentException when the text isn't a tailscale status. */
     fun parse(text: String): List<FleetCandidate> {
-        val root = runCatching { json.parseToJsonElement(text).jsonObject }
-            .getOrElse { throw IllegalArgumentException("that doesn't read as a tailscale status") }
-        val peers = root["Peer"]?.jsonObject
+        val root = runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonObject
+            ?: throw IllegalArgumentException("that doesn't read as a tailscale status")
+        val peers = root["Peer"] as? JsonObject
             ?: throw IllegalArgumentException("no fleet in this status — is Tailscale up on that mooring?")
         return peers.values.mapNotNull { element ->
-            val peer = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
-            val ipv4 = peer["TailscaleIPs"]?.let { ips ->
-                runCatching { ips.jsonArray }.getOrNull()
-                    ?.mapNotNull { runCatching { it.jsonPrimitive.content }.getOrNull() }
-                    ?.firstOrNull { '.' in it }
-            }
+            val peer = element as? JsonObject ?: return@mapNotNull null
+            val ipv4 = (peer["TailscaleIPs"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                ?.firstOrNull { '.' in it }
             val dnsName = peer.string("DNSName")?.trimEnd('.')?.takeIf { it.isNotBlank() }
             val host = ipv4 ?: dnsName ?: return@mapNotNull null
             FleetCandidate(
@@ -46,14 +44,11 @@ object TailscaleImport {
                     ?: dnsName?.substringBefore('.')
                     ?: host,
                 host = host,
-                online = peer["Online"]?.let {
-                    runCatching { it.jsonPrimitive.content.toBoolean() }.getOrNull()
-                } ?: false,
+                online = peer.string("Online")?.toBoolean() ?: false,
                 os = peer.string("OS").orEmpty(),
             )
         }.sortedWith(compareByDescending<FleetCandidate> { it.online }.thenBy { it.name.lowercase() })
     }
 
-    private fun kotlinx.serialization.json.JsonObject.string(key: String): String? =
-        this[key]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+    private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.content
 }

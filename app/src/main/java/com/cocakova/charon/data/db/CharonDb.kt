@@ -41,6 +41,9 @@ data class HostEntity(
     val lastModified: Long,
 ) {
     val displayName: String get() = name.ifBlank { "$username@$host" }
+
+    /** The address line, wherever a mooring is spelled out: user@host, :port when odd. */
+    val address: String get() = "$username@$host" + if (port != 22) ":$port" else ""
 }
 
 /**
