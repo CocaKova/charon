@@ -77,15 +77,18 @@ object ReliquaryCodec {
             .array()
 
         val key = stretch(passphrase, salt, memKiB, iterations, parallelism)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(
-            Cipher.ENCRYPT_MODE,
-            SecretKeySpec(key, "AES"),
-            GCMParameterSpec(TAG_BITS, nonce),
-        )
-        cipher.updateAAD(header)
-        val sealed = cipher.doFinal(plain)
-        key.fill(0)
+        val sealed = try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.ENCRYPT_MODE,
+                SecretKeySpec(key, "AES"),
+                GCMParameterSpec(TAG_BITS, nonce),
+            )
+            cipher.updateAAD(header)
+            cipher.doFinal(plain)
+        } finally {
+            key.fill(0)
+        }
         return header + sealed
     }
 
@@ -94,11 +97,13 @@ object ReliquaryCodec {
         val buf = ByteBuffer.wrap(file, 0, HEADER_LEN)
         val magic = ByteArray(MAGIC.size).also(buf::get)
         if (!magic.contentEquals(MAGIC)) throw ReliquaryException.NotAReliquary()
-        val version = buf.get().toInt()
+        // Header bytes are unsigned on the wire; mask so a high version reads as
+        // era 200 rather than a nonsensical -56 in the refusal.
+        val version = buf.get().toInt() and 0xFF
         if (version != VERSION) throw ReliquaryException.UnknownEra(version)
         val memKiB = buf.int
         val iterations = buf.int
-        val parallelism = buf.get().toInt()
+        val parallelism = buf.get().toInt() and 0xFF
         if (memKiB !in 1..MAX_MEM_KIB || iterations !in 1..MAX_ITERATIONS || parallelism !in 1..8) {
             throw ReliquaryException.UnreasonableSeal()
         }

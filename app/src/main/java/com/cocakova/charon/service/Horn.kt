@@ -44,14 +44,31 @@ class Horn(private val context: Context) {
             append("  ·  ")
             append(sessionLabel)
         }
+        val title = if (aground) "the horn sounds — ran aground" else "the horn sounds — come ashore"
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_charon)
-            .setContentTitle(if (aground) "the horn sounds — ran aground" else "the horn sounds — come ashore")
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
             .setContentIntent(open)
+            // A command line can carry a secret in plain sight (`mysql -pSECRET`,
+            // a token in an env assignment). The toll keeps those off the glass
+            // while they're typed; the horn must not post them to a locked one.
+            // Where the traveller has asked for sensitive content to be hidden,
+            // the lock screen gets the call without the command.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_charon)
+                    .setContentTitle(title)
+                    .setContentText(sessionLabel)
+                    .setCategory(NotificationCompat.CATEGORY_STATUS)
+                    .setAutoCancel(true)
+                    .setContentIntent(open)
+                    .build(),
+            )
             .build()
         try {
             NotificationManagerCompat.from(context).notify(nextId.incrementAndGet(), notification)
