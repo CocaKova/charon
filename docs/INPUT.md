@@ -113,9 +113,18 @@ Three blended sources, ranked in this order:
    keyword/builtin, a path invocation, a variable, or an env assignment — an
    unknown token (alias, function, inventory not landed) passes only when the line
    is *shaped* like an invocation (short, or carrying option/path/operator
-   characters). Sentences typed into a chat or REPL running on the host never
-   enter the history, and the same gate screens what's already stored before it
-   may suggest (so lines recorded before the gate existed stay silent). The gate
+   characters). A qualifying first token is necessary but **not sufficient**:
+   English is full of words that are also programs (`make`, `test`, `find`,
+   `read`, `do`, `if`, `let`, `time`, `who`, `install`), so the whole line is read
+   too. Shell evidence anywhere in it — an option, a path, an operator, an
+   assignment — settles it as a command. With none, a bare-word line is prose if it
+   carries the closed-class English function words a sentence can't be built
+   without, a contraction, or sentence punctuation (or simply runs past eight bare
+   words). Shell compound skeletons (`for f in …`) are exempt, since their bare
+   `in` is grammar, not English. Sentences typed into a chat or REPL running on the
+   host never enter the history, and the same gate screens what's already stored
+   before it may suggest (so lines recorded before the gate existed stay silent —
+   no history clearing needed after a gate fix). The gate
    is deliberately **not** tied to the alternate screen: tmux runs its shells
    there, and per-host tmux auto-attach is the default workflow.
 2. **Command grammar** (`Specs`) — curated specs for the tools a homelab hand
