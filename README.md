@@ -21,9 +21,35 @@ alternate app icons, and a supporter mark. Nothing functional is ever behind it.
   biometrics. The vault exports to a single passphrase-encrypted file with a documented
   format — no cloud account, ever.
 
-## Status
+## What's aboard (v1.0)
 
-Pre-release (v0.1 walking skeleton in progress). See `docs/PLAN.md` for the roadmap.
+- From-scratch VT/xterm terminal: truecolor, mouse reporting, scrollback + selection into
+  scrollback, bracketed paste, pinch-zoom, per-session color liveries — corpus-tested
+  against recorded vim/htop/tmux sessions and conformance-checked (see `docs/TERMINAL.md`)
+- Accessory key row with sticky/lockable Ctrl-Alt, long-press variants, auto-repeat, F-keys
+- Host-aware autocomplete: command grammar plus live probes of what's actually installed
+  and running on the host (tmux sessions, docker containers, systemd units, remote paths) —
+  with a prose gate and a secret gate so it never learns your sentences or your tokens
+- Multi-session with auto-reconnect, instant network-return redial, and per-host startup
+  commands (`tmux new -As main`); adaptive keepalive so idle sessions sip battery
+- SFTP browser with resumable transfers; local, remote, and dynamic (SOCKS5) port
+  forwards; snippets; fleet view with reachability soundings, Tailscale import, LAN sweep
+- The toll: password prompts are detected and keystrokes routed around the suggestion
+  strip, the IME's learning, and command history
+- The reliquary: the whole vault (hosts, keys, known hosts, snippets, forwards) exports to
+  one passphrase-sealed `.charon` file — Argon2id + AES-GCM, format in `docs/VAULT_FORMAT.md`
+- The horn: a notification when a long command finishes while you're away (OSC 133,
+  rig one-liners in `docs/HORN.md`)
+
+## Installing
+
+Grab the APK from [Releases](https://github.com/CocaKova/charon/releases) and sideload it.
+Every release is signed with the same key, so updates install in place.
+
+**[The Guide](docs/GUIDE.md)** covers everything from the first crossing to vault
+export — start there. Deeper references: [terminal conformance](docs/TERMINAL.md),
+[input model](docs/INPUT.md), [vault format](docs/VAULT_FORMAT.md),
+[the horn's shell rig](docs/HORN.md).
 
 ## Building
 
@@ -43,4 +69,6 @@ Charon is written and maintained solely by Jonathan Kovacs ([@CocaKova](https://
 
 ## License
 
-TBD — all rights reserved until a license is chosen (see `LICENSE`).
+[PolyForm Noncommercial 1.0.0](LICENSE) — read it, build it, use it, share it freely for
+any noncommercial purpose. Selling Charon or shipping it in a commercial product is
+reserved to the author.

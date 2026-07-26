@@ -14,6 +14,13 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
 }
 
+// Conformance rig (tools/conformance_vttest.py) runs ConformanceBridge with plain
+// java — this prints the classpath it needs, after :terminal-core:testClasses.
+tasks.register("printTestRuntimeClasspath") {
+    val cp = sourceSets["test"].runtimeClasspath
+    doLast { println(cp.asPath) }
+}
+
 tasks.withType<Test>().configureEach {
     // Golden regeneration: ./gradlew :terminal-core:test -Dcharon.regenGoldens=<dir>
     systemProperty("charon.regenGoldens", System.getProperty("charon.regenGoldens") ?: "")
