@@ -300,6 +300,60 @@ class TerminalEmulatorTest {
         assertEquals("$E[?62;1;6;9;15;22c", r.responses.last())
         r.feed("$E[>c")
         assertEquals("$E[>41;377;0c", r.responses.last())
+        r.feed("$E[x")
+        assertEquals("$E[2;1;1;128;128;1;0x", r.responses.last())
+        r.feed("$E[1x")
+        assertEquals("$E[3;1;1;128;128;1;0x", r.responses.last())
+    }
+
+    @Test
+    fun reverseWraparoundBackspace() {
+        val r = Rig(cols = 10, rows = 5)
+        r.feed("$E[?45h$E[?7h")
+        // BS at left edge climbs to previous row's last column.
+        r.feed("$E[2;1H\u0008")
+        assertEquals(9, r.term.cursorX)
+        assertEquals(0, r.term.cursorY)
+        // Within a scroll region, the top row wraps to the region's bottom.
+        r.feed("$E[2;4r$E[2;1H\u0008")
+        assertEquals(9, r.term.cursorX)
+        assertEquals(3, r.term.cursorY)
+        r.feed("$E[r")
+        // A pending-wrap cell only annuls the wrap: cursor column is unchanged.
+        r.feed("$E[1;9Hab\u0008")
+        assertEquals(9, r.term.cursorX)
+        assertEquals(0, r.term.cursorY)
+        // CUB walks backwards across the soft wrap.
+        r.feed("$E[1;9Habcd$E[4D")
+        assertEquals(8, r.term.cursorX)
+        assertEquals(0, r.term.cursorY)
+        // Without mode 45, BS stops at the left edge.
+        r.feed("$E[?45l$E[2;1H\u0008")
+        assertEquals(0, r.term.cursorX)
+        assertEquals(1, r.term.cursorY)
+    }
+
+    @Test
+    fun decidAndStatusReports() {
+        val r = Rig()
+        r.feed("${E}Z")
+        assertEquals("$E[?62;1;6;9;15;22c", r.responses.last())
+        r.feed("$E[?15n")
+        assertEquals("$E[?13n", r.responses.last())
+        r.feed("$E[?25n")
+        assertEquals("$E[?20n", r.responses.last())
+        r.feed("$E[?26n")
+        assertEquals("$E[?27;1;0;0n", r.responses.last())
+    }
+
+    @Test
+    fun decstrResetsSavedCursorState() {
+        val r = Rig()
+        r.feed("$E[6;6H${E}7") // move + DECSC
+        r.feed("$E[!p")        // DECSTR must forget the save (DEC STD-070)
+        r.feed("$E[10;10H${E}8") // DECRC after reset restores home, not 6;6
+        assertEquals(0, r.term.cursorX)
+        assertEquals(0, r.term.cursorY)
     }
 
     @Test

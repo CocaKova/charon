@@ -74,3 +74,37 @@ lay out against).
 - 2026-07-13 — v0.4 input slice: MouseEncoder + TextSelection + scrollback viewport
   landed with unit tests; verified on-device against the Spark (htop mouse click +
   wheel, select/copy/bracketed-paste, scrollback, sticky Ctrl-C, Fn page).
+- 2026-07-26 — **v1.0 gate: vttest + esctest run live against the emulator** via
+  `tools/conformance_vttest.py` + `ConformanceBridge` (real vttest/esctest under a
+  pty; the emulator answers DA/DSR/CPR in the loop; every screen snapshotted and
+  reviewed by hand).
+
+  **vttest** (tests 1, 2, 3, 4, 6, 8 + submenus): cursor movements (E-frame,
+  autowrap letter ladder, ESC-embedded controls, leading zeros), screen features
+  (WRAP, tab set/reset, 80-col light/dark, soft/jump scroll in narrow + full
+  regions), origin mode, SGR pattern, save/restore cursor with DEC graphics,
+  charset screens (B + DEC special complete in G0/G1), VT102 accordion
+  (IL/DL/ICH/DCH/IRM: "A's, X's, nothing more", 'A***B', 'AB', staggered column)
+  and terminal reports (DSR 5/6, DA1, DA2, DECREQTPARM "-- OK") all render/report
+  correctly.
+
+  **esctest** (`--expected-terminal xterm --max-vt-level 2`): **113 passed,
+  354 xterm-known-bugs, 82 failed — every failure an accounted-for policy**:
+  XtermWinops (28: no window moving/resizing/title-stack on a phone),
+  Change/Reset dynamic colors (40: XParseColor rgbi:/TekHVC/CIELab setters out of
+  scope; rgb: get/set works), DECCOLM-dependent (RIS/DECSET 3: 80/132 switching
+  deliberately ignored — phone width is physical, same as stock xterm with c132
+  off / tmux / Termux), DA/DA2 exact-string (4: we answer honestly as VT220-class
+  w/o printer/locator; esctest wants xterm's exact IDs), S8C1T (1: UTF-8-first,
+  no 8-bit C1), and RI/NEL/IND/HTS_8bit (4: inverted — esctest expected xterm to
+  FAIL these with wide chars enabled; we handle 8-bit C1 input fine and
+  "unexpectedly succeed").
+
+  **Fixed during the pass** (all with new JVM tests): DECSTR now resets the DECSC
+  saved-cursor state and reverse-wrap mode; DECREQTPARM answered; DECID (ESC Z)
+  answered; DSR ?15/?25/?26 answered; **reverse wraparound (DECSET 45)
+  implemented** — BS annuls a pending wrap, climbs rows region-confined (top
+  wraps to region bottom), CUB walks back across soft wraps. Known limits
+  (accepted): NRC/Latin-1-in-GR render as U+FFFD (UTF-8-only, like kitty/
+  Alacritty), DECDHL/DECDWL degrade to single-size lines (like tmux), LNM
+  keyboard side (Enter→CRLF) not wired.

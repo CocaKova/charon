@@ -53,6 +53,7 @@ class TerminalEmulator(
     var focusEvents = false; private set
     var mouseMode = 0; private set          // 0 off, else 9/1000/1002/1003
     var mouseSgr = false; private set
+    var reverseWraparound = false; private set // DECSET 45 (xterm reverse-wrap)
     var cursorStyle = 1; private set        // DECSCUSR: 0/1 blink block … 6 steady bar
     private var linefeedMode = false        // LNM
 
@@ -196,7 +197,22 @@ class TerminalEmulator(
     override fun execute(control: Int) {
         when (control) {
             0x07 -> onBell()
-            0x08 -> { if (cursorX > 0) cursorX--; pendingWrap = false }
+            0x08 -> when {
+                // xterm reverse-wrap (mode 45): BS on a just-wrapped-pending cell only
+                // annuls the pending wrap; BS at the left edge climbs to the previous
+                // row's last column, staying inside the scroll region (top wraps to
+                // bottom — xterm's post-2018 margin-confined behavior).
+                reverseWraparound && autowrap && pendingWrap -> pendingWrap = false
+                reverseWraparound && autowrap && cursorX == 0 -> {
+                    cursorX = cols - 1
+                    cursorY = when {
+                        cursorY == scrollTop -> scrollBottom
+                        cursorY > 0 -> cursorY - 1
+                        else -> rows - 1
+                    }
+                }
+                else -> { if (cursorX > 0) cursorX--; pendingWrap = false }
+            }
             0x09 -> tabForward(1)
             0x0A, 0x0B, 0x0C -> {
                 linefeed()
@@ -223,6 +239,7 @@ class TerminalEmulator(
                 'E' -> { linefeed(); cursorX = 0 }
                 'H' -> tabStops.set(cursorX)
                 'M' -> reverseIndex()
+                'Z' -> onResponse("$CSI?62;1;6;9;15;22c") // DECID: same as DA1
                 'c' -> fullReset()
                 '=' -> keypadApp = true
                 '>' -> keypadApp = false
@@ -242,8 +259,11 @@ class TerminalEmulator(
             "?" -> when (final) {
                 'h' -> for (i in 0 until maxOf(params.count, 1)) decMode(params.get(i, 0), true)
                 'l' -> for (i in 0 until maxOf(params.count, 1)) decMode(params.get(i, 0), false)
-                'n' -> if (params.get(0, 0) == 6) {
-                    onResponse("$CSI?${reportRow()};${cursorX + 1}R")
+                'n' -> when (params.get(0, 0)) {
+                    6 -> onResponse("$CSI?${reportRow()};${cursorX + 1}R")
+                    15 -> onResponse("$CSI?13n")      // no printer
+                    25 -> onResponse("$CSI?20n")      // UDKs unlocked
+                    26 -> onResponse("$CSI?27;1;0;0n") // keyboard: North American
                 }
                 else -> {}
             }
@@ -260,7 +280,8 @@ class TerminalEmulator(
             'A' -> moveCursor(cursorX, cursorY - params.getOr1(0), clampToRegion = true)
             'B' -> moveCursor(cursorX, cursorY + params.getOr1(0), clampToRegion = true)
             'C' -> moveCursor(cursorX + params.getOr1(0), cursorY)
-            'D' -> moveCursor(cursorX - params.getOr1(0), cursorY)
+            'D' -> if (reverseWraparound && autowrap) cursorBackWrapping(params.getOr1(0))
+                   else moveCursor(cursorX - params.getOr1(0), cursorY)
             'E' -> moveCursor(0, cursorY + params.getOr1(0), clampToRegion = true)
             'F' -> moveCursor(0, cursorY - params.getOr1(0), clampToRegion = true)
             'G' -> moveCursor(params.getOr1(0) - 1, cursorY)
@@ -301,6 +322,10 @@ class TerminalEmulator(
             'r' -> setScrollRegion(params.get(0, 1), params.get(1, rows))
             's' -> saveCursor()
             'u' -> restoreCursor()
+            // DECREQTPARM → DECREPTPARM: no parity, 8 bits, 38400bd both ways, 16x clock.
+            'x' -> when (val sol = params.get(0, 0)) {
+                0, 1 -> onResponse("$CSI${sol + 2};1;1;128;128;1;0x")
+            }
             't' -> when (params.get(0, 0)) {
                 14 -> onResponse("${CSI}4;${rows * cellHeightPx};${cols * cellWidthPx}t")
                 18 -> onResponse("${CSI}8;$rows;${cols}t")
@@ -521,6 +546,7 @@ class TerminalEmulator(
             9 -> mouseMode = if (on) 9 else 0
             12 -> {} // cursor blink — renderer preference
             25 -> cursorVisible = on
+            45 -> reverseWraparound = on
             47, 1047 -> switchAltScreen(on, saveCursorWithIt = false)
             1000 -> mouseMode = if (on) 1000 else 0
             1002 -> mouseMode = if (on) 1002 else 0
@@ -548,6 +574,21 @@ class TerminalEmulator(
             if (saveCursorWithIt) restoreCursor()
         }
         markAllDirty()
+    }
+
+    /** CUB with reverse-wrap active: each step may climb a row (region-confined). */
+    private fun cursorBackWrapping(n: Int) {
+        if (pendingWrap) pendingWrap = false
+        repeat(n.coerceAtMost(cols * rows)) {
+            if (cursorX > 0) cursorX-- else {
+                cursorX = cols - 1
+                cursorY = when {
+                    cursorY == scrollTop -> scrollBottom
+                    cursorY > 0 -> cursorY - 1
+                    else -> rows - 1
+                }
+            }
+        }
     }
 
     private fun saveCursor() {
@@ -591,6 +632,14 @@ class TerminalEmulator(
         pendingWrap = false
         cursorKeysApp = false
         keypadApp = false
+        reverseWraparound = false // xterm's DECSTR resets mode 45
+        // DECSTR also resets the DECSC save state (DEC STD-070): a DECRC with no
+        // save after a reset restores home + defaults, not a stale position.
+        saved.let { s ->
+            s.x = 0; s.y = 0; s.attrs = CellAttrs.DEFAULT
+            s.g0 = TermCharsets.ASCII; s.g1 = TermCharsets.ASCII; s.glIsG1 = false
+            s.originMode = false; s.pendingWrap = false
+        }
     }
 
     private fun fullReset() {
@@ -605,6 +654,7 @@ class TerminalEmulator(
         bracketedPaste = false
         mouseMode = 0
         mouseSgr = false
+        reverseWraparound = false
         focusEvents = false
         reverseVideo = false
         linefeedMode = false
