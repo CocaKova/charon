@@ -34,10 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.fleet.Reach
 import com.cocakova.charon.fleet.Sounding
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 
 /**
  * The quick actions a long-pressed mooring offers — one tap from the Dock to the
@@ -84,7 +81,7 @@ fun QuickActionsSheet(
                     Text(
                         host.address,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MistGrey,
+                        color = Styx.mist,
                     )
                 }
             }
@@ -92,21 +89,21 @@ fun QuickActionsSheet(
             // The last sounding, spoken plainly.
             val (soundingText, soundingColor) = when (sounding?.reach) {
                 Reach.REACHABLE ->
-                    "answers in ${sounding.latencyMs} ms" to StyxTeal
-                Reach.UNREACHABLE -> "dark water — no answer" to WarnEmber
-                null -> "unsounded" to MistGrey
+                    "answers in ${sounding.latencyMs} ms" to Styx.water
+                Reach.UNREACHABLE -> "dark water — no answer" to Styx.ember
+                null -> "unsounded" to Styx.mist
             }
             Text(soundingText, style = MaterialTheme.typography.bodySmall, color = soundingColor)
             Spacer(Modifier.height(14.dp))
 
-            QuickAction("cross", "board the ferry to this mooring", StyxTeal, dismissThen(onCross))
+            QuickAction("cross", "board the ferry to this mooring", Styx.water, dismissThen(onCross))
             if (liveSessionId != null) {
                 QuickAction(
-                    "step aboard", "a crossing is already underway", StyxTeal,
+                    "step aboard", "a crossing is already underway", Styx.water,
                     dismissThen { onStepAboard(liveSessionId) },
                 )
                 QuickAction(
-                    "the hold", "browse this ship's files", ObolGold,
+                    "the hold", "browse this ship's files", Styx.coin,
                     dismissThen { onOpenHold(liveSessionId) },
                 )
             }
@@ -122,7 +119,7 @@ fun QuickActionsSheet(
             QuickAction(
                 if (armedRelease) "tap again to release" else "release the mooring",
                 if (armedRelease) "this forgets the saved crossing" else "remove from the Dock",
-                WarnEmber,
+                Styx.ember,
             ) {
                 if (!armedRelease) {
                     armedRelease = true
@@ -157,7 +154,7 @@ private fun QuickAction(
         Text(
             detail,
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey,
+            color = Styx.mist,
             maxLines = 1,
             modifier = Modifier.weight(1f),
         )

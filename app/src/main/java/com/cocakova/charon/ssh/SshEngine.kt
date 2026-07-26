@@ -66,6 +66,32 @@ interface SshConnection {
      * off-main. The handle outlives this call until stopped or the transport dies.
      */
     fun startForward(type: String, bindPort: Int, targetHost: String, targetPort: Int): ForwardHandle
+
+    /**
+     * Retune the transport's keepalive heartbeat. The heartbeat exists to notice a
+     * silently dead link, but it is also the battery cost of an always-on session —
+     * every beat wakes the radio — so it beats fast only while the app is on screen
+     * and slow while the phone is pocketed. Safe from any thread (a field write).
+     */
+    fun setKeepAlive(intervalSeconds: Int) {}
+
+    /**
+     * Send one cheap transport-level packet to test the crossing right now — fired
+     * on return to foreground, so a link that died while the phone slept is
+     * discovered immediately instead of waiting out a slow background heartbeat.
+     * A dead transport errors out through the reader thread and the normal redial
+     * machinery. Blocking; call off-main; may throw.
+     */
+    fun nudge() {}
+
+    companion object {
+        /** Heartbeat while the app is on screen: a dead link should be noticed fast. */
+        const val KEEPALIVE_FOREGROUND_S = 30
+
+        /** Heartbeat while pocketed — just enough to catch silent drops; TCP NAT
+         *  mappings (and Tailscale's own path keepalive) survive far longer gaps. */
+        const val KEEPALIVE_BACKGROUND_S = 120
+    }
 }
 
 /** One charted channel, running until stopped (or the transport under it dies). */

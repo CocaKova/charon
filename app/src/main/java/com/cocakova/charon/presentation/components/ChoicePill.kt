@@ -14,8 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cocakova.charon.theme.CharonMono
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.StyxTeal
+import com.cocakova.charon.theme.Styx
 
 /**
  * The app's one small choice pill — mode toggles at the helm (abc/raw), the fleet
@@ -27,7 +26,7 @@ import com.cocakova.charon.theme.StyxTeal
 fun ChoicePill(
     label: String,
     selected: Boolean,
-    selectedColor: Color = StyxTeal,
+    selectedColor: Color = Styx.water,
     onClick: () -> Unit,
 ) {
     Text(
@@ -35,7 +34,7 @@ fun ChoicePill(
         fontFamily = CharonMono,
         fontSize = 13.sp,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        color = if (selected) MaterialTheme.colorScheme.onPrimary else MistGrey,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else Styx.mist,
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
             .background(

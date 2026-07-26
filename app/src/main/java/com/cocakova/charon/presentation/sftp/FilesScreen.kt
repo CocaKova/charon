@@ -68,11 +68,7 @@ import androidx.compose.ui.unit.dp
 import com.cocakova.charon.ssh.RemoteEntry
 import com.cocakova.charon.ssh.SftpChannel
 import com.cocakova.charon.ssh.SftpTransfers
-import com.cocakova.charon.theme.BoneWhite
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -206,7 +202,7 @@ fun FilesScreen(
         // A quiet pulse under the bar while a listing is in flight over the old deck.
         if (loading && listing != null) {
             LinearProgressIndicator(
-                color = StyxTeal,
+                color = Styx.water,
                 trackColor = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth().height(2.dp),
             )
@@ -215,14 +211,14 @@ fun FilesScreen(
         Box(Modifier.weight(1f)) {
             when {
                 loading && listing == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = StyxTeal)
+                    CircularProgressIndicator(color = Styx.water)
                 }
                 error != null -> Column(
                     Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text(error!!, style = MaterialTheme.typography.bodyMedium, color = WarnEmber)
+                    Text(error!!, style = MaterialTheme.typography.bodyMedium, color = Styx.ember)
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = { refreshTick++ }) { Text("try again") }
                 }
@@ -348,7 +344,7 @@ fun FilesScreen(
                     if (entry.isDir) "the folder goes into the river (must be empty)"
                     else "the file goes into the river — there's no fishing it back",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                 )
             },
             confirmButton = {
@@ -360,10 +356,10 @@ fun FilesScreen(
                             .onFailure { error = it.message }
                         refreshTick++
                     }
-                }) { Text("release", color = WarnEmber) }
+                }) { Text("release", color = Styx.ember) }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("keep", color = MistGrey) }
+                TextButton(onClick = { deleteTarget = null }) { Text("keep", color = Styx.mist) }
             },
         )
     }
@@ -408,19 +404,19 @@ private fun HoldTopBar(
                 Text(
                     "the hold — $sessionLabel",
                     style = MaterialTheme.typography.labelMedium,
-                    color = StyxTeal,
+                    color = Styx.water,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     dir,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MistGrey,
+                    color = Styx.mist,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            BarAction("⇡ aboard", onUpload, tint = ObolGold)
+            BarAction("⇡ aboard", onUpload, tint = Styx.coin)
             BarAction("+dir", onMkdir)
             BarAction("↻", onRefresh)
         }
@@ -428,7 +424,7 @@ private fun HoldTopBar(
 }
 
 @Composable
-private fun BarAction(label: String, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = MistGrey) {
+private fun BarAction(label: String, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = Styx.mist) {
     Text(
         label,
         style = MaterialTheme.typography.labelMedium,
@@ -449,7 +445,7 @@ private fun UpRow(onUp: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("↰ ..", style = MaterialTheme.typography.bodyMedium, color = MistGrey)
+        Text("↰ ..", style = MaterialTheme.typography.bodyMedium, color = Styx.mist)
     }
 }
 
@@ -475,13 +471,13 @@ private fun EntryRow(
                 else -> "·"
             },
             style = MaterialTheme.typography.bodyMedium,
-            color = if (entry.isDir) StyxTeal else MistGrey,
+            color = if (entry.isDir) Styx.water else Styx.mist,
         )
         Spacer(Modifier.width(12.dp))
         Text(
             entry.name + if (entry.isDir) "/" else "",
             style = MaterialTheme.typography.bodyMedium,
-            color = if (entry.isDir) StyxTeal else BoneWhite,
+            color = if (entry.isDir) Styx.water else Styx.bone,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -491,14 +487,14 @@ private fun EntryRow(
             Text(
                 humanBytes(entry.size),
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
             )
             Spacer(Modifier.width(10.dp))
         }
         Text(
             DATE_FMT.format(Date(entry.mtime)),
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey.copy(alpha = 0.7f),
+            color = Styx.mist.copy(alpha = 0.7f),
         )
     }
 }
@@ -514,21 +510,21 @@ private fun CargoSheet(
         Text(
             entry.name,
             style = MaterialTheme.typography.titleMedium,
-            color = BoneWhite,
+            color = Styx.bone,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
             if (entry.isDir) "directory" else humanBytes(entry.size),
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey,
+            color = Styx.mist,
             modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
         )
         if (!entry.isDir) {
-            SheetAction("⇣  carry ashore", StyxTeal, onPull)
+            SheetAction("⇣  carry ashore", Styx.water, onPull)
         }
-        SheetAction("✎  rename", BoneWhite, onRename)
-        SheetAction("✕  release into the river", WarnEmber, onDelete)
+        SheetAction("✎  rename", Styx.bone, onRename)
+        SheetAction("✕  release into the river", Styx.ember, onDelete)
     }
 }
 
@@ -550,10 +546,10 @@ private fun SheetAction(label: String, tint: androidx.compose.ui.graphics.Color,
 private fun TransferRow(t: SftpTransfers.Transfer, onOpen: (SftpTransfers.Transfer) -> Unit) {
     val haptic = LocalHapticFeedback.current
     val tint = when (t.state) {
-        SftpTransfers.State.FAILED -> WarnEmber
-        SftpTransfers.State.DONE -> StyxTeal
+        SftpTransfers.State.FAILED -> Styx.ember
+        SftpTransfers.State.DONE -> Styx.water
         SftpTransfers.State.RUNNING ->
-            if (t.direction == SftpTransfers.Direction.PULL) StyxTeal else ObolGold
+            if (t.direction == SftpTransfers.Direction.PULL) Styx.water else Styx.coin
     }
     // The drawn bar chases the real offset from zero, so even an instant crossing
     // sweeps the width — the eye needs the journey, however short the river.
@@ -589,7 +585,7 @@ private fun TransferRow(t: SftpTransfers.Transfer, onOpen: (SftpTransfers.Transf
             Text(
                 t.name,
                 style = MaterialTheme.typography.labelMedium,
-                color = BoneWhite,
+                color = Styx.bone,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -606,9 +602,9 @@ private fun TransferRow(t: SftpTransfers.Transfer, onOpen: (SftpTransfers.Transf
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = when (t.state) {
-                    SftpTransfers.State.FAILED -> WarnEmber
+                    SftpTransfers.State.FAILED -> Styx.ember
                     SftpTransfers.State.DONE -> tint
-                    SftpTransfers.State.RUNNING -> MistGrey
+                    SftpTransfers.State.RUNNING -> Styx.mist
                 },
                 maxLines = 1,
             )
@@ -655,10 +651,10 @@ private fun NameDialog(
         confirmButton = {
             TextButton(
                 onClick = { if (value.isNotBlank()) onConfirm(value.trim()) },
-            ) { Text(confirm, color = StyxTeal) }
+            ) { Text(confirm, color = Styx.water) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("cancel", color = MistGrey) }
+            TextButton(onClick = onDismiss) { Text("cancel", color = Styx.mist) }
         },
     )
 }

@@ -1,9 +1,12 @@
 package com.cocakova.charon.ssh
 
 import android.util.Log
+import com.cocakova.charon.service.AppVisibility
 import net.schmizz.keepalive.KeepAliveProvider
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.Message
+import net.schmizz.sshj.common.SSHPacket
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Parameters
 import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
@@ -102,7 +105,12 @@ class SshjEngine : SshEngine {
 
         try {
             client.connect(config.host, config.port)
-            client.connection.keepAlive.keepAliveInterval = 15
+            // The heartbeat starts at whichever rate matches where the app is right
+            // now — a redial fired by the network callback can land with the phone
+            // still pocketed, and must not wake the radio every 30s all night.
+            client.connection.keepAlive.keepAliveInterval =
+                if (AppVisibility.visible) SshConnection.KEEPALIVE_FOREGROUND_S
+                else SshConnection.KEEPALIVE_BACKGROUND_S
             authenticate(client, config)
 
             val sshSession = client.startSession()
@@ -222,6 +230,17 @@ class SshjEngine : SshEngine {
 
                 override fun openSftp(): SftpChannel? =
                     runCatching { SshjSftp(client.newSFTPClient()) }.getOrNull()
+
+                override fun setKeepAlive(intervalSeconds: Int) {
+                    client.connection.keepAlive.keepAliveInterval = intervalSeconds
+                }
+
+                override fun nudge() {
+                    // SSH_MSG_IGNORE: one packet, no reply expected. A live link
+                    // absorbs it; a dead one surfaces as a transport error that the
+                    // reader thread turns into Disconnected(clean=false) → redial.
+                    client.transport.write(SSHPacket(Message.IGNORE))
+                }
 
                 override fun startForward(
                     type: String,

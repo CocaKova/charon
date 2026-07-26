@@ -137,4 +137,53 @@ class CommandGateTest {
         prose("")
         prose("   ")
     }
+
+    /**
+     * The 07-22 hole, found live: typing "ple" autofilled a whole prompt. Prose
+     * addressed to an assistant is full of paths, parens and dollar signs, and the
+     * old rule let any one of them settle the line as a command — while "please"
+     * itself passed the unknown-token shape check. Shell characters are evidence,
+     * not proof: the function words still speak.
+     */
+    @Test
+    fun proseCarryingPathsAndParensIsRejected() {
+        prose(
+            "please fix the light mode in ~/workspace/charon and then harden " +
+                "the smart complete feature (see docs/PLAN.md)",
+        )
+        prose("make the dock look better and update docs/DESIGN.md while you're at it")
+        prose("look at src/main/java and tell me what you think of the layout")
+        prose("test it with the \$PATH inventory loaded and see if the gate holds")
+        prose("install it under /opt when you get the chance")
+        prose("find the bug in TerminalScreen.kt (line 214) and fix it")
+    }
+
+    /** A function word can never open a command — there is no program called
+     *  "please" on this host, however command-shaped the rest of the line looks. */
+    @Test
+    fun functionWordOpenersAreRejectedOutright() {
+        prose("please review ~/workspace/charon")
+        prose("that one in src/app is the bug")
+        prose("when you push use --force-with-lease")
+        prose("it's rendering the dock twice")
+    }
+
+    /** Prose belongs in quotes inside real commands: masked, it never condemns
+     *  them. This is what keeps commit messages autofilling. */
+    @Test
+    fun quotedProseInsideCommandsDoesNotCondemnThem() {
+        command("git commit -m \"fix the gate for the light mode\"")
+        command("git commit -am 'make it read the whole line'")
+        command("grep -rn \"the water\" src/")
+        command("tmux rename-session -t main 'the dock'")
+        command("echo 'this is a test of the horn'")
+    }
+
+    /** Unquoted function words in value position still give a sentence away even
+     *  when it carries shell characters. */
+    @Test
+    fun unquotedProseWithShellCharactersIsStillProse() {
+        prose("make it more responsive and check ~/notes.md for the details")
+        prose("who was in /var/log when the crossing failed and why")
+    }
 }

@@ -77,15 +77,12 @@ import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.fleet.Reach
 import com.cocakova.charon.fleet.Sounding
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import com.cocakova.charon.presentation.components.StyxCrossing
 import com.cocakova.charon.presentation.keys.KeysSheet
 import com.cocakova.charon.presentation.vault.ReliquarySheet
 import com.cocakova.charon.ssh.TerminalSession
-import com.cocakova.charon.theme.DeepTeal
 import kotlinx.coroutines.delay
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.StyxTeal
 import kotlin.math.sin
 
 /**
@@ -116,6 +113,8 @@ fun DockScreen(
     onOpenHold: (String) -> Unit,
     onFetchTailnet: suspend (HostEntity) -> Result<String>,
     onAddMoorings: (List<HostDraft>) -> Unit,
+    historyCount: Int = 0,
+    onClearHistory: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
@@ -186,7 +185,7 @@ fun DockScreen(
                 style = MaterialTheme.typography.titleLarge.copy(
                     // Letter-spaced like an inscription, with the water's glow behind it.
                     letterSpacing = 7.sp,
-                    shadow = Shadow(color = StyxTeal.copy(alpha = 0.55f), blurRadius = 22f),
+                    shadow = Shadow(color = Styx.water.copy(alpha = 0.55f), blurRadius = 22f),
                 ),
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.align(Alignment.Center).padding(start = 7.dp),
@@ -242,9 +241,9 @@ fun DockScreen(
                 value = query,
                 onValueChange = { query = it },
                 singleLine = true,
-                placeholder = { Text("search the fleet", color = MistGrey) },
+                placeholder = { Text("search the fleet", color = Styx.mist) },
                 leadingIcon = {
-                    Icon(Icons.Outlined.Search, contentDescription = null, tint = MistGrey)
+                    Icon(Icons.Outlined.Search, contentDescription = null, tint = Styx.mist)
                 },
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -308,7 +307,7 @@ fun DockScreen(
                     Text(
                         "no moorings match \"$q\"",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MistGrey,
+                        color = Styx.mist,
                         modifier = Modifier.padding(vertical = 12.dp),
                     )
                 }
@@ -371,6 +370,8 @@ fun DockScreen(
         SettingsSheet(
             onDismiss = { showSettings = false },
             onReliquary = { showSettings = false; showReliquary = true },
+            historyCount = historyCount,
+            onClearHistory = onClearHistory,
         )
     }
 
@@ -424,11 +425,12 @@ val LanternHues: List<String?> = listOf(
 )
 
 /** Parse a #RRGGBB lantern hue, falling back to the dimmed default. */
+@Composable
 fun lanternColor(hex: String?): androidx.compose.ui.graphics.Color =
     hex?.let {
         runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(it)) }
             .getOrNull()
-    } ?: DeepTeal
+    } ?: Styx.waterDeep
 
 /** Does this mooring answer to a search query? Matches label, address, or harbor. */
 private fun HostEntity.matches(q: String): Boolean =
@@ -478,7 +480,7 @@ private fun RunningSessionsBar(
         Text(
             "underway",
             style = MaterialTheme.typography.labelSmall,
-            color = MistGrey,
+            color = Styx.mist,
         )
         Spacer(Modifier.width(10.dp))
         // Live crossings breathe — a still dot reads as a dead one.
@@ -501,7 +503,7 @@ private fun RunningSessionsBar(
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(StyxTeal.copy(alpha = breath)),
+                        .background(Styx.water.copy(alpha = breath)),
                 )
                 Spacer(Modifier.width(7.dp))
                 Text(
@@ -538,7 +540,7 @@ private fun HarborHeader(
         Text(
             "▾",
             style = MaterialTheme.typography.bodyMedium,
-            color = StyxTeal,
+            color = Styx.water,
             modifier = Modifier.rotate(spin),
         )
         Spacer(Modifier.width(8.dp))
@@ -551,7 +553,7 @@ private fun HarborHeader(
         Text(
             count.toString(),
             style = MaterialTheme.typography.labelMedium,
-            color = MistGrey,
+            color = Styx.mist,
         )
         Spacer(Modifier.width(12.dp))
         // A waterline trailing off into the dark — gives each harbor its own horizon.
@@ -561,7 +563,7 @@ private fun HarborHeader(
                 .height(1.dp)
                 .background(
                     Brush.horizontalGradient(
-                        listOf(DeepTeal.copy(alpha = 0.55f), Color.Transparent),
+                        listOf(Styx.waterDeep.copy(alpha = 0.55f), Color.Transparent),
                     ),
                 ),
         )
@@ -616,7 +618,7 @@ private fun MooringCard(
         // Mooring lantern: a flame that actually burns. The host's colour tag stays
         // full-strength so colour-coding reads at a glance even for offline hosts —
         // reachability rides on top of it, never over it. Answering water = a bright
-        // halo; dark water = a WarnEmber tick at its foot; unsounded = a low flame.
+        // halo; dark water = a Styx.ember tick at its foot; unsounded = a low flame.
         // The flicker reads the shared clock inside the draw phase only, at a phase
         // offset hashed from the host id, so every lantern burns to its own wind.
         val lantern = lanternColor(host.colorHex)
@@ -642,7 +644,7 @@ private fun MooringCard(
                         .align(Alignment.BottomEnd)
                         .size(5.dp)
                         .clip(CircleShape)
-                        .background(WarnEmber),
+                        .background(Styx.ember),
                 )
             }
         }
@@ -674,14 +676,14 @@ private fun MooringCard(
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
             )
         }
         IconButton(onClick = onEdit, enabled = enabled) {
             Icon(
                 Icons.Outlined.Edit,
                 contentDescription = "edit",
-                tint = MistGrey,
+                tint = Styx.mist,
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -699,7 +701,7 @@ private fun NewCrossingCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, DeepTeal, RoundedCornerShape(12.dp))
+            .border(1.dp, Styx.waterDeep, RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -707,13 +709,13 @@ private fun NewCrossingCard(
         Text(
             "+ new crossing",
             style = MaterialTheme.typography.bodyLarge,
-            color = StyxTeal,
+            color = Styx.water,
         )
         if (firstMooring) {
             Text(
                 "no moorings yet — the ferryman awaits",
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
@@ -739,12 +741,12 @@ private fun ChartWatersCard(
         Text(
             "⚓ chart the waters",
             style = MaterialTheme.typography.bodyMedium,
-            color = MistGrey,
+            color = Styx.mist,
         )
         Text(
             "import the tailnet  ·  sound the near waters",
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey.copy(alpha = 0.7f),
+            color = Styx.mist.copy(alpha = 0.7f),
             modifier = Modifier.padding(top = 2.dp),
         )
     }

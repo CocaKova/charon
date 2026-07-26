@@ -51,12 +51,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.cocakova.charon.data.db.PortForwardEntity
-import com.cocakova.charon.theme.BoneWhite
+import com.cocakova.charon.theme.Styx
 import com.cocakova.charon.theme.CharonMono
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
 import java.util.UUID
 
 /**
@@ -114,7 +110,7 @@ fun ForwardsSheet(
             Text(
                 "charted channels — $sessionLabel",
                 style = MaterialTheme.typography.titleMedium,
-                color = StyxTeal,
+                color = Styx.water,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -122,7 +118,7 @@ fun ForwardsSheet(
                 Text(
                     "save this host to a mooring first — quick connects can't keep charts",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                     modifier = Modifier.padding(top = 12.dp),
                 )
                 return@Column
@@ -131,7 +127,7 @@ fun ForwardsSheet(
                 Text(
                     error,
                     style = MaterialTheme.typography.bodySmall,
-                    color = WarnEmber,
+                    color = Styx.ember,
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
@@ -143,13 +139,13 @@ fun ForwardsSheet(
                     "~    ≈    ~    ≈    ~",
                     fontFamily = CharonMono,
                     style = MaterialTheme.typography.bodySmall,
-                    color = StyxTeal.copy(alpha = 0.45f),
+                    color = Styx.water.copy(alpha = 0.45f),
                     modifier = Modifier.padding(top = 6.dp),
                 )
                 Text(
                     "no channels charted for this host yet",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
             }
@@ -179,7 +175,7 @@ fun ForwardsSheet(
             }
             AnimatedVisibility(visible = !adding, enter = fadeIn(), exit = fadeOut()) {
                 TextButton(onClick = { adding = true }) {
-                    Text("+ chart a channel", color = StyxTeal)
+                    Text("+ chart a channel", color = Styx.water)
                 }
             }
         }
@@ -193,7 +189,7 @@ fun ForwardsSheet(
                 Text(
                     describe(fwd),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                 )
             },
             confirmButton = {
@@ -201,10 +197,10 @@ fun ForwardsSheet(
                     if (fwd.id in running) onToggle(fwd)
                     onDelete(fwd.id)
                     deleting = null
-                }) { Text("remove", color = WarnEmber) }
+                }) { Text("remove", color = Styx.ember) }
             },
             dismissButton = {
-                TextButton(onClick = { deleting = null }) { Text("keep", color = MistGrey) }
+                TextButton(onClick = { deleting = null }) { Text("keep", color = Styx.mist) }
             },
         )
     }
@@ -234,9 +230,9 @@ private fun ChannelRow(
             fwd.type,
             style = MaterialTheme.typography.labelLarge,
             color = when (fwd.type) {
-                "L" -> StyxTeal
-                "R" -> ObolGold
-                else -> BoneWhite
+                "L" -> Styx.water
+                "R" -> Styx.coin
+                else -> Styx.bone
             },
         )
         Spacer(Modifier.width(12.dp))
@@ -244,7 +240,7 @@ private fun ChannelRow(
             Text(
                 describe(fwd),
                 style = MaterialTheme.typography.bodyMedium,
-                color = BoneWhite,
+                color = Styx.bone,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -253,9 +249,9 @@ private fun ChannelRow(
                 // pulses gold — the channel is being charted, not stuck.
                 val dotColor by animateColorAsState(
                     when {
-                        charting -> ObolGold
-                        open -> StyxTeal
-                        else -> MistGrey.copy(alpha = 0.4f)
+                        charting -> Styx.coin
+                        open -> Styx.water
+                        else -> Styx.mist.copy(alpha = 0.4f)
                     },
                     tween(250),
                     label = "channel-dot",
@@ -281,24 +277,24 @@ private fun ChannelRow(
                         else -> "tap to open"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (charting) ObolGold else MistGrey,
+                    color = if (charting) Styx.coin else Styx.mist,
                 )
             }
         }
         Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("auto", style = MaterialTheme.typography.bodySmall, color = MistGrey)
+            Text("auto", style = MaterialTheme.typography.bodySmall, color = Styx.mist)
             Switch(
                 checked = fwd.autoStart,
                 onCheckedChange = onAutoChange,
-                colors = SwitchDefaults.colors(checkedTrackColor = StyxTeal),
+                colors = SwitchDefaults.colors(checkedTrackColor = Styx.water),
             )
         }
         Spacer(Modifier.width(4.dp))
         Text(
             "✕",
             style = MaterialTheme.typography.bodyMedium,
-            color = MistGrey,
+            color = Styx.mist,
             modifier = Modifier
                 .clip(CircleShape)
                 .clickable(onClick = onLongPress)
@@ -330,11 +326,11 @@ private fun AddChannelForm(
                 Text(
                     "$t · $label",
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MistGrey,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else Styx.mist,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(
-                            if (selected) StyxTeal
+                            if (selected) Styx.water
                             else MaterialTheme.colorScheme.surfaceVariant,
                         )
                         .clickable { type = t }
@@ -378,7 +374,7 @@ private fun AddChannelForm(
             Switch(
                 checked = autoStart,
                 onCheckedChange = { autoStart = it },
-                colors = SwitchDefaults.colors(checkedTrackColor = StyxTeal),
+                colors = SwitchDefaults.colors(checkedTrackColor = Styx.water),
             )
             Spacer(Modifier.width(8.dp))
             // The label is the flexible one — it wraps before the buttons get
@@ -386,11 +382,11 @@ private fun AddChannelForm(
             Text(
                 "chart on every crossing",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MistGrey,
+                color = Styx.mist,
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onCancel) { Text("cancel", color = MistGrey) }
+            TextButton(onClick = onCancel) { Text("cancel", color = Styx.mist) }
             Button(
                 onClick = {
                     val bind = bindPort.toIntOrNull() ?: return@Button

@@ -41,11 +41,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cocakova.charon.data.db.SnippetEntity
-import com.cocakova.charon.theme.BoneWhite
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 
 /**
  * Rehearsed lines: the snippet bar. Lives in the suggestion strip's slot while the
@@ -103,13 +99,13 @@ fun SnippetBar(
                 Text(
                     "❯",
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (s.hostId != null) ObolGold else StyxTeal,
+                    color = if (s.hostId != null) Styx.coin else Styx.water,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     s.name,
                     style = MaterialTheme.typography.labelMedium,
-                    color = BoneWhite,
+                    color = Styx.bone,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -119,7 +115,7 @@ fun SnippetBar(
         Text(
             "+",
             style = MaterialTheme.typography.titleMedium,
-            color = StyxTeal,
+            color = Styx.water,
             modifier = Modifier
                 .clip(RoundedCornerShape(9.dp))
                 .clickable { addingNew = true }
@@ -163,7 +159,7 @@ private fun SnippetSheet(
             Text(
                 if (existing == null) "rehearse a line" else "edit the line",
                 style = MaterialTheme.typography.titleMedium,
-                color = StyxTeal,
+                color = Styx.water,
             )
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
@@ -186,13 +182,13 @@ private fun SnippetSheet(
                     Switch(
                         checked = thisHostOnly,
                         onCheckedChange = { thisHostOnly = it },
-                        colors = SwitchDefaults.colors(checkedTrackColor = ObolGold),
+                        colors = SwitchDefaults.colors(checkedTrackColor = Styx.coin),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "this host only",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MistGrey,
+                        color = Styx.mist,
                     )
                 }
             }
@@ -200,11 +196,11 @@ private fun SnippetSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (existing != null) {
                     TextButton(onClick = { onDelete(existing.id) }) {
-                        Text("forget it", color = WarnEmber)
+                        Text("forget it", color = Styx.ember)
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text("cancel", color = MistGrey) }
+                TextButton(onClick = onDismiss) { Text("cancel", color = Styx.mist) }
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = {

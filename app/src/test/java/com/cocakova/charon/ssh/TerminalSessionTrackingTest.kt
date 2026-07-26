@@ -32,6 +32,17 @@ class TerminalSessionTrackingTest {
     }
 
     @Test
+    fun everyRemoteBurstBumpsTheOutputTick() {
+        // The renderer's idle loop sleeps on outputTick instead of polling the
+        // frame clock; a burst that didn't bump it would leave the screen stale.
+        val session = TerminalSession("t")
+        val before = session.outputTick.value
+        session.feed("hello")
+        session.feed("$esc[?1049h")
+        assertEquals(before + 2, session.outputTick.value)
+    }
+
+    @Test
     fun crossingTheAltBoundaryResetsTheDraft() {
         val session = TerminalSession("t")
         val committed = mutableListOf<String>()

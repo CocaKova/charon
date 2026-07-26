@@ -9,6 +9,9 @@ data class Suggestion(
     val display: String,
     val matched: Int,
     val insert: String,
+    /** True when [display] is a remembered full line — the ones the user may ask
+     *  the river to forget with a long-press. */
+    val fromHistory: Boolean = false,
 )
 
 /**
@@ -120,7 +123,9 @@ object Completer {
         history.asSequence()
             .filter { it.length > prefix.length && it.startsWith(prefix) }
             .take(take)
-            .forEach { offer(out, Suggestion(it, prefix.length, it.substring(prefix.length))) }
+            .forEach {
+                offer(out, Suggestion(it, prefix.length, it.substring(prefix.length), fromHistory = true))
+            }
     }
 
     private fun isWrapper(word: String) =
