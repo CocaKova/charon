@@ -14,7 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import com.cocakova.charon.theme.MistGrey
+import com.cocakova.charon.theme.Styx
 
 /** One row a [ReadonlyDropdownField] offers. [dim] = the "none" choice, in mist. */
 data class DropdownChoice(
@@ -58,7 +58,7 @@ fun ReadonlyDropdownField(
             choices.forEach { choice ->
                 DropdownMenuItem(
                     text = {
-                        Text(choice.text, color = if (choice.dim) MistGrey else Color.Unspecified)
+                        Text(choice.text, color = if (choice.dim) Styx.mist else Color.Unspecified)
                     },
                     onClick = { open = false; choice.onPick() },
                 )

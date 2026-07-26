@@ -31,10 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.cocakova.charon.ssh.PendingTrust
 import com.cocakova.charon.ssh.TrustRequest
-import com.cocakova.charon.theme.BoneWhite
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.StyxBlack
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 
 /**
  * The trust gate. First meeting = a sheet: the ferryman shows his token, the
@@ -95,7 +92,7 @@ private fun FerrymanChangedScreen(request: TrustRequest.Changed, pending: Pendin
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(WarnEmber)
+            .background(Styx.ember)
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
@@ -105,7 +102,7 @@ private fun FerrymanChangedScreen(request: TrustRequest.Changed, pending: Pendin
         Text(
             "THE FERRYMAN\nHAS CHANGED",
             style = MaterialTheme.typography.titleLarge,
-            color = StyxBlack,
+            color = Styx.night,
         )
         Spacer(Modifier.height(16.dp))
         Text(
@@ -113,7 +110,7 @@ private fun FerrymanChangedScreen(request: TrustRequest.Changed, pending: Pendin
                 "different ${request.keyType} key than the one on the ledger. If you did not " +
                 "reinstall or rekey this server, someone may be intercepting the crossing.",
             style = MaterialTheme.typography.bodyMedium,
-            color = StyxBlack,
+            color = Styx.night,
         )
         Spacer(Modifier.height(24.dp))
         FingerprintPlaque(
@@ -131,15 +128,15 @@ private fun FerrymanChangedScreen(request: TrustRequest.Changed, pending: Pendin
         Button(
             onClick = { pending.resolve(false) },
             colors = ButtonDefaults.buttonColors(
-                containerColor = StyxBlack,
-                contentColor = BoneWhite,
+                containerColor = Styx.night,
+                contentColor = Styx.bone,
             ),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("refuse passage") }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = { pending.resolve(true) },
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = StyxBlack),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Styx.night),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("I rekeyed this server — replace the ledger entry") }
         Spacer(Modifier.height(24.dp))
@@ -152,10 +149,10 @@ private fun FingerprintPlaque(label: String, fingerprint: String, dark: Boolean 
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(if (dark) StyxBlack else Color.Black)
+            .background(Styx.night)
             .border(
                 1.dp,
-                if (dark) StyxBlack else MaterialTheme.colorScheme.surfaceVariant,
+                if (dark) Styx.night else MaterialTheme.colorScheme.surfaceVariant,
                 RoundedCornerShape(10.dp),
             )
             .padding(14.dp),
@@ -163,12 +160,12 @@ private fun FingerprintPlaque(label: String, fingerprint: String, dark: Boolean 
         Text(
             label,
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey,
+            color = Styx.mist,
         )
         Text(
             fingerprint,
             style = MaterialTheme.typography.bodyMedium,
-            color = BoneWhite,
+            color = Styx.bone,
             modifier = Modifier.padding(top = 4.dp),
         )
     }

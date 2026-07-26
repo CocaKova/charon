@@ -43,6 +43,7 @@ import com.cocakova.charon.ssh.ConnectConfig
 import com.cocakova.charon.ssh.SessionManager
 import com.cocakova.charon.ssh.SftpTransfers
 import com.cocakova.charon.theme.CharonTheme
+import com.cocakova.charon.theme.Sky
 import kotlinx.coroutines.launch
 
 /**
@@ -54,6 +55,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        Sky.load(getSharedPreferences("charon", MODE_PRIVATE))
         val app = application as CharonApp
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, app)
         setContent {
@@ -152,6 +154,7 @@ private fun CharonRoot(
     val runningForwards by sessionManager.runningForwards.collectAsState()
     val forwardError by sessionManager.forwardError.collectAsState()
     val soundings by fleetWatch.soundings.collectAsState()
+    val historyEntries by commandHistory.entries.collectAsState()
     val scope = rememberCoroutineScope()
 
     val current = active
@@ -279,6 +282,8 @@ private fun CharonRoot(
                             ?.let { sessionManager.execOnce(it, "tailscale status --json") }
                         ?: Result.failure(IllegalStateException("the crossing was not unlocked"))
                 },
+                historyCount = historyEntries.size,
+                onClearHistory = { commandHistory.clear() },
                 onAddMoorings = { drafts ->
                     scope.launch { drafts.forEach { hostVault.save(it) } }
                 },

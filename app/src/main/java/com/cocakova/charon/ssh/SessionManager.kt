@@ -10,6 +10,7 @@ import com.cocakova.charon.data.db.KnownHostDao
 import com.cocakova.charon.data.db.PortForwardDao
 import com.cocakova.charon.data.db.PortForwardEntity
 import com.cocakova.charon.data.repository.CommandHistory
+import com.cocakova.charon.service.AppVisibility
 import com.cocakova.charon.service.ConnectionService
 import com.cocakova.charon.service.Horn
 import com.cocakova.charon.theme.TerminalSchemes
@@ -93,15 +94,6 @@ class SessionManager(
         }
     }
 
-    init {
-        // Instant redial when connectivity returns — the airplane-mode demo gate. Any
-        // session that's down and still wanted gets its backoff cut short.
-        val cm = appContext.getSystemService(ConnectivityManager::class.java)
-        runCatching {
-            cm?.registerDefaultNetworkCallback(networkCallback)
-        }
-    }
-
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             managed.values.forEach { ms ->
@@ -115,6 +107,40 @@ class SessionManager(
                     ms.retries = 0
                     ms.session.state.value = TerminalSession.State.Reconnecting(1)
                     launchConnect(ms, firstAttempt = false)
+                }
+            }
+        }
+    }
+
+    init {
+        // Instant redial when connectivity returns — the airplane-mode demo gate. Any
+        // session that's down and still wanted gets its backoff cut short. The
+        // callback MUST be declared above this block: Kotlin runs initializers in
+        // declaration order, and referencing it from below handed the register call
+        // a null — which threw, was swallowed by runCatching, and silently left
+        // every network-return redial to the slow backoff loop instead.
+        val cm = appContext.getSystemService(ConnectivityManager::class.java)
+        runCatching {
+            cm?.registerDefaultNetworkCallback(networkCallback)
+        }
+        // Every live crossing breathes with the app. The keepalive heartbeat is the
+        // battery cost of always-on sessions — each beat wakes the radio — so it
+        // slows way down while the phone is pocketed. On return it snaps back fast
+        // AND each transport gets a nudge, so a link that died overnight is found
+        // now rather than on the next slow beat (redial + tmux re-attach make the
+        // recovery invisible either way).
+        scope.launch {
+            AppVisibility.foreground.collect { fg ->
+                val interval = if (fg) SshConnection.KEEPALIVE_FOREGROUND_S
+                else SshConnection.KEEPALIVE_BACKGROUND_S
+                managed.values.forEach { ms ->
+                    val conn = ms.connection ?: return@forEach
+                    scope.launch {
+                        runCatching {
+                            conn.setKeepAlive(interval)
+                            if (fg) conn.nudge()
+                        }
+                    }
                 }
             }
         }
@@ -140,7 +166,7 @@ class SessionManager(
         // a chat or REPL running on the host must never resurface as autofill.
         session.onCommandSubmitted = { line ->
             if (CommandGate.isCommandLine(line, ms.remote?.commandSet.orEmpty())) {
-                commandHistory.record(line)
+                commandHistory.record(line, hostId)
             }
         }
         // The horn: a rigged shell (OSC 133, docs/HORN.md) reports commands done;

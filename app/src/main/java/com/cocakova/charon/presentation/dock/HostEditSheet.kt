@@ -46,9 +46,7 @@ import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.presentation.components.DropdownChoice
 import com.cocakova.charon.presentation.components.ReadonlyDropdownField
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 
 /**
  * Add/edit a mooring — the v0.1 quick-connect form, docked. "cross" sails without
@@ -227,7 +225,7 @@ fun HostEditSheet(
                 value = startupCommand,
                 onValueChange = { startupCommand = it },
                 label = { Text("startup command (optional)") },
-                placeholder = { Text("tmux new -As main", color = MistGrey) },
+                placeholder = { Text("tmux new -As main", color = Styx.mist) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -242,7 +240,7 @@ fun HostEditSheet(
                     Text(
                         "redial when the crossing drops",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MistGrey,
+                        color = Styx.mist,
                     )
                 }
                 Switch(checked = autoReconnect, onCheckedChange = { autoReconnect = it })
@@ -266,7 +264,7 @@ fun HostEditSheet(
                 TextButton(
                     onClick = { onDelete(existing.id) },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("release this mooring", color = WarnEmber) }
+                ) { Text("release this mooring", color = Styx.ember) }
             }
         }
     }
@@ -288,7 +286,7 @@ private fun LanternSwatch(
             .size(30.dp)
             .clip(CircleShape)
             .then(
-                if (selected) Modifier.border(2.dp, StyxTeal, CircleShape)
+                if (selected) Modifier.border(2.dp, Styx.water, CircleShape)
                 else Modifier
             )
             .clickable(onClick = onClick),
@@ -299,7 +297,7 @@ private fun LanternSwatch(
                 .size(18.dp)
                 .clip(CircleShape)
                 .then(
-                    if (hue == null) Modifier.border(1.5.dp, MistGrey, CircleShape)
+                    if (hue == null) Modifier.border(1.5.dp, Styx.mist, CircleShape)
                     else Modifier.background(fill)
                 ),
         )

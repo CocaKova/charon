@@ -20,8 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.repository.BioCancelled
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.launch
 
 private enum class KeyForm { NONE, FORGE, IMPORT }
@@ -72,7 +71,7 @@ fun KeysSheet(
             Text("keys of passage", style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary)
             Text("Private halves stay sealed here. The courier carries only the public key.",
-                style = MaterialTheme.typography.bodySmall, color = MistGrey)
+                style = MaterialTheme.typography.bodySmall, color = Styx.mist)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(
                     onClick = { form = if (form == KeyForm.FORGE) KeyForm.NONE else KeyForm.FORGE },
@@ -101,7 +100,7 @@ fun KeysSheet(
             HorizontalDivider()
             if (identities.isEmpty()) {
                 Text("No keys yet. Forge one or paste an OpenSSH private key.",
-                    color = MistGrey, modifier = Modifier.padding(vertical = 12.dp))
+                    color = Styx.mist, modifier = Modifier.padding(vertical = 12.dp))
             }
             identities.forEach { identity ->
                 Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .25f),
@@ -115,11 +114,11 @@ fun KeysSheet(
                                     color = MaterialTheme.colorScheme.primary)
                             }
                             IconButton(onClick = { releasing = identity }, enabled = !busy) {
-                                Icon(Icons.Outlined.DeleteOutline, "release key", tint = MistGrey)
+                                Icon(Icons.Outlined.DeleteOutline, "release key", tint = Styx.mist)
                             }
                         }
                         Text(identity.fingerprint, style = MaterialTheme.typography.bodySmall,
-                            color = MistGrey)
+                            color = Styx.mist)
                         Row {
                             TextButton(onClick = {
                                 clipboard.setText(AnnotatedString(identity.publicLine))
@@ -172,7 +171,7 @@ fun KeysSheet(
                 TextButton(onClick = {
                     releasing = null
                     launchOperation("key released") { onRelease(identity.id) }
-                }) { Text("release", color = WarnEmber) }
+                }) { Text("release", color = Styx.ember) }
             },
             dismissButton = { TextButton(onClick = { releasing = null }) { Text("keep") } },
         )
@@ -232,7 +231,7 @@ private fun BiometricRow(checked: Boolean, onChecked: (Boolean) -> Unit) {
         Column(Modifier.weight(1f)) {
             Text("fingerprint gate")
             Text("require approval whenever this key crosses",
-                style = MaterialTheme.typography.bodySmall, color = MistGrey)
+                style = MaterialTheme.typography.bodySmall, color = Styx.mist)
         }
         Switch(checked, onChecked)
     }

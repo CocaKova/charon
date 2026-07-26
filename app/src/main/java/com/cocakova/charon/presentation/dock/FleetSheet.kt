@@ -52,11 +52,7 @@ import com.cocakova.charon.fleet.TailscaleImport
 import com.cocakova.charon.presentation.components.ChoicePill
 import com.cocakova.charon.presentation.components.DropdownChoice
 import com.cocakova.charon.presentation.components.ReadonlyDropdownField
-import com.cocakova.charon.theme.DeepTeal
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.launch
 
 /**
@@ -144,7 +140,7 @@ fun FleetSheet(
 
             error?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WarnEmber)
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Styx.ember)
             }
 
             if (sightings.isNotEmpty()) {
@@ -207,7 +203,7 @@ fun FleetSheet(
                     Text(
                         "no key attached — you'll add a password or key before first crossing",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MistGrey,
+                        color = Styx.mist,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -217,7 +213,7 @@ fun FleetSheet(
                     onValueChange = { harbor = it },
                     singleLine = true,
                     label = { Text("harbor (optional)") },
-                    placeholder = { Text(if (tailnetMode) "e.g. tailnet" else "e.g. home port", color = MistGrey) },
+                    placeholder = { Text(if (tailnetMode) "e.g. tailnet" else "e.g. home port", color = Styx.mist) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
@@ -243,8 +239,8 @@ fun FleetSheet(
                     },
                     enabled = count > 0 && username.isNotBlank() && !busy,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = StyxTeal,
-                        contentColor = Color.Black,
+                        containerColor = Styx.water,
+                        contentColor = Styx.night,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -275,7 +271,7 @@ private fun TailnetFinder(
     Text(
         "ask a mooring already on the tailnet — it runs `tailscale status` and reports the fleet",
         style = MaterialTheme.typography.bodySmall,
-        color = MistGrey,
+        color = Styx.mist,
     )
     Spacer(Modifier.height(8.dp))
     if (hosts.isNotEmpty()) {
@@ -301,21 +297,21 @@ private fun TailnetFinder(
                 },
                 enabled = !busy && source != null,
             ) {
-                Text(if (busy) "asking…" else "ask", color = StyxTeal)
+                Text(if (busy) "asking…" else "ask", color = Styx.water)
             }
         }
     } else {
         Text(
             "no moorings yet to ask — paste a status instead",
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey,
+            color = Styx.mist,
         )
     }
     Spacer(Modifier.height(4.dp))
     TextButton(onClick = { pasting = !pasting }) {
         Text(
             if (pasting) "hide the paste chart" else "or paste `tailscale status --json`",
-            color = ObolGold,
+            color = Styx.coin,
             style = MaterialTheme.typography.labelMedium,
         )
     }
@@ -337,7 +333,7 @@ private fun TailnetFinder(
                         .onFailure { onError(it.message) }
                 },
                 enabled = pasted.isNotBlank(),
-            ) { Text("read it", color = StyxTeal) }
+            ) { Text("read it", color = Styx.water) }
         }
     }
 }
@@ -363,14 +359,14 @@ private fun NearWatersFinder(
         Text(
             "no near waters — the phone isn't on a local network",
             style = MaterialTheme.typography.bodySmall,
-            color = MistGrey,
+            color = Styx.mist,
         )
         return
     }
     Text(
         "sound ${waters.subnetLabel} for ships answering on :22",
         style = MaterialTheme.typography.bodySmall,
-        color = MistGrey,
+        color = Styx.mist,
     )
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -400,22 +396,22 @@ private fun NearWatersFinder(
             },
             enabled = !busy,
         ) {
-            Text(if (busy) "sounding…" else "sound the harbor", color = StyxTeal)
+            Text(if (busy) "sounding…" else "sound the harbor", color = Styx.water)
         }
         if (busy || swept) {
             Spacer(Modifier.width(8.dp))
             Text(
                 "$dialed/$berths · $found answer",
                 style = MaterialTheme.typography.labelMedium,
-                color = if (found > 0) StyxTeal else MistGrey,
+                color = if (found > 0) Styx.water else Styx.mist,
             )
         }
     }
     if (busy) {
         LinearProgressIndicator(
             progress = { if (berths > 0) dialed / berths.toFloat() else 0f },
-            color = StyxTeal,
-            trackColor = DeepTeal,
+            color = Styx.water,
+            trackColor = Styx.waterDeep,
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
     }
@@ -448,21 +444,21 @@ private fun SightingRow(
                 else -> "☐"
             },
             style = MaterialTheme.typography.bodyLarge,
-            color = if (chosen) StyxTeal else MistGrey,
+            color = if (chosen) Styx.water else Styx.mist,
         )
         Spacer(Modifier.width(10.dp))
         Box(
             Modifier
                 .size(7.dp)
                 .clip(CircleShape)
-                .background(if (ship.online) StyxTeal else MistGrey.copy(alpha = 0.4f)),
+                .background(if (ship.online) Styx.water else Styx.mist.copy(alpha = 0.4f)),
         )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 ship.name,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (moored) MistGrey else MaterialTheme.colorScheme.onSurface,
+                color = if (moored) Styx.mist else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 buildString {
@@ -471,7 +467,7 @@ private fun SightingRow(
                     if (moored) append("  ·  already moored")
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
             )
         }
     }

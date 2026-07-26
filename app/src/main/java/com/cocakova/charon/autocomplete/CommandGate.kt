@@ -18,16 +18,26 @@ package com.cocakova.charon.autocomplete
  * words that are also programs — `make`, `test`, `find`, `read`, `do`, `if`, `let`,
  * `time`, `who`, `install` — so "make it more responsive" and "let me know when
  * that lands" clear the first-token check on a real host. The rest of the line is
- * therefore read too: a line with no shell evidence anywhere in it (no options, no
- * paths, no operators, no assignments) that carries the closed-class function words
- * every English sentence is built from is prose, whatever it opens with.
+ * therefore read too, with two rules learned the hard way:
+ *
+ *  1. **Quoted spans are data, not shape.** `git commit -m "fix the gate"` carries
+ *     its prose inside quotes, where it belongs; the whole-line read masks quoted
+ *     spans first so that prose never counts against a real command. (An apostrophe
+ *     inside a word — `don't` — is a contraction, never an opening quote.)
+ *  2. **Shell characters are evidence, not proof.** Prose addressed to a machine is
+ *     full of paths, parens and dollar signs — "please fix the gate in ~/src/app
+ *     (see docs/PLAN.md)" — so a stray `/` must not settle the question. With shell
+ *     evidence present the line stays a command unless the *unquoted* words carry
+ *     two or more of the closed-class function words English is built from; with no
+ *     evidence at all, one is enough. Real command arguments are names, paths and
+ *     flags — outside quotes they essentially never carry function words at all.
  */
 object CommandGate {
 
     /** Whether [line] reads as a shell command against the host's [installed]
      *  inventory (empty set = inventory unknown, judge on shape alone). */
     fun isCommandLine(line: String, installed: Set<String>): Boolean {
-        val tokens = line.trim().split(WS).filter { it.isNotEmpty() }
+        val tokens = maskQuotes(line).trim().split(WS).filter { it.isNotEmpty() }
         if (tokens.isEmpty()) return false
         return opensLikeCommand(tokens, installed) && !readsAsProse(tokens)
     }
@@ -43,24 +53,31 @@ object CommandGate {
             first in SHELL_WORDS -> true                      // keywords + builtins
             first in Specs.all -> true
             first in installed -> true
+            // An English function word can never *open* a command unless the host
+            // genuinely has it as an executable (`who`, `which` — checked above).
+            // "please …", "that …", "when …" end here, whatever follows them.
+            first.lowercase() in FUNCTION_WORDS -> false
             else -> invocationShaped(first, tokens)
         }
     }
 
     /**
-     * The whole-line read. Shell evidence anywhere — an option, a path, an operator,
-     * an assignment — settles it as a command and ends the question; those characters
-     * are what arguments are made of, and sentences don't carry them. Without any,
-     * the line is bare words, and bare words are where prose and commands look alike:
-     * a command's are names (`sudo apt install ripgrep`), a sentence's are held
-     * together by function words and sentence punctuation.
+     * The whole-line read, over quote-masked tokens. Bare words are where prose and
+     * commands look alike: a command's are names (`sudo apt install ripgrep`), a
+     * sentence's are held together by function words and sentence punctuation.
+     * Shell evidence — an option, a path, an operator, an assignment — raises the
+     * bar but no longer settles the question: prose about code carries paths too.
      */
     private fun readsAsProse(tokens: List<String>): Boolean {
         if (tokens.size < 3) return false                     // too short to read either way
         if (isCompoundSkeleton(tokens)) return false          // `for f in a b c`, `case x in`
-        if (tokens.any { hasShellEvidence(it) }) return false
         // The opening word already qualified as a command; judge it on its arguments.
-        return tokens.drop(1).any { isProseMarker(it) } || tokens.size >= LONG_LINE
+        val markers = tokens.drop(1).count { isProseMarker(it) }
+        return if (tokens.any { hasShellEvidence(it) }) {
+            markers >= 2
+        } else {
+            markers >= 1 || tokens.size >= LONG_LINE
+        }
     }
 
     /** `for f in …` / `select x in …` / `case x in` — shell grammar whose bare words
@@ -91,6 +108,32 @@ object CommandGate {
             tokens.any { t -> t.startsWith("-") || t.any { it in SHELL_CHARS } }
     }
 
+    /**
+     * Drop quoted spans — their content is an argument's *data*, and judging it as
+     * line shape lets `git commit -m "fix the gate"` read as prose and lets prose
+     * smuggle its sentence inside what looks like an argument. A single quote only
+     * opens a span at a word edge: between letters it is a contraction's apostrophe.
+     * An unterminated quote drops just itself, so a lone apostrophe can't eat the
+     * rest of the line.
+     */
+    private fun maskQuotes(line: String): String {
+        val sb = StringBuilder(line.length)
+        var i = 0
+        while (i < line.length) {
+            val c = line[i]
+            val opensQuote = (c == '"' || c == '\'') &&
+                !(c == '\'' && i > 0 && line[i - 1].isLetter())
+            if (opensQuote) {
+                val end = line.indexOf(c, i + 1)
+                i = if (end > i) end + 1 else i + 1
+            } else {
+                sb.append(c)
+                i++
+            }
+        }
+        return sb.toString()
+    }
+
     private val WS = Regex("\\s+")
     private val ASSIGN = Regex("[A-Za-z_][A-Za-z0-9_]*\\+?=.*")
     private val NAME = Regex("[A-Za-z_][A-Za-z0-9._+-]{0,31}")
@@ -100,8 +143,8 @@ object CommandGate {
      *  carry nothing but names run out well before here. */
     private const val LONG_LINE = 8
 
-    // Deliberately no quotes and no dot: prose apostrophes ("don't") and sentence
-    // periods must not read as shell.
+    // Deliberately no quotes and no dot: quotes are handled by masking, and prose
+    // sentence periods must not read as shell.
     private const val SHELL_CHARS = "/=|&;<>$(){}[]*~`"
 
     /** Shell keywords and builtins the `ls $bindirs` inventory fallback can't see. */

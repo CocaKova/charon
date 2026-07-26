@@ -26,9 +26,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
 import com.cocakova.charon.R
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
+import com.cocakova.charon.theme.DaybreakPalette
+import com.cocakova.charon.theme.LocalCharonPalette
+import com.cocakova.charon.theme.NightPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
@@ -54,6 +54,7 @@ fun StyxCrossing(
     fontSize: TextUnit = 12.sp,
 ) {
     val context = LocalContext.current
+    val ink = if (LocalCharonPalette.current === NightPalette) NightInk else DaybreakInk
     val density = LocalDensity.current
     val paint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -162,7 +163,7 @@ fun StyxCrossing(
                     val a = strength * (0.30f - 0.06f * i) * shimmer
                     drawChar(
                         REFLECT_CHARS[(i + (phase * 7).toInt()) % REFLECT_CHARS.size],
-                        colF + sway, rr, GOLD_COLOR, a,
+                        colF + sway, rr, ink.gold, a,
                     )
                 }
             }
@@ -177,7 +178,7 @@ fun StyxCrossing(
                         drawChar(
                             STAR_CHARS[(hsh * 1000).toInt() % STAR_CHARS.size],
                             cx.toFloat(), cy.toFloat(),
-                            MIST_COLOR, 0.06f + 0.11f * tw,
+                            ink.mist, 0.06f + 0.11f * tw,
                         )
                     }
                 }
@@ -198,7 +199,7 @@ fun StyxCrossing(
                     }
                     if (bits == 0) continue
                     val a = alphaBase * (1f - 0.85f * mistT(cx.toFloat()))
-                    drawChar((0x2800 + bits).toChar(), cx.toFloat(), cy.toFloat(), SEA_COLOR, a)
+                    drawChar((0x2800 + bits).toChar(), cx.toFloat(), cy.toFloat(), ink.sea, a)
                 }
             }
 
@@ -209,14 +210,14 @@ fun StyxCrossing(
                 for (c in line.indices) {
                     if (line[c] == ' ') continue
                     if (i == 0) {
-                        paint.color = android.graphics.Color.BLACK
+                        paint.color = ink.occluder
                         paint.alpha = 255
                         canvas.drawRect(
                             c * charW, (deckRow + i) * lineH,
                             (c + 1) * charW, (deckRow + i + 1) * lineH, paint,
                         )
                     }
-                    drawChar(line[c], c.toFloat(), deckRow + i, PIER_COLOR, if (i == 0) 0.75f else 0.5f)
+                    drawChar(line[c], c.toFloat(), deckRow + i, ink.pier, if (i == 0) 0.75f else 0.5f)
                 }
             }
 
@@ -226,7 +227,7 @@ fun StyxCrossing(
             val lampCol = 1f
             val lampRow = deckRow - 2f
             val lampBreath = 0.5f + 0.5f * sin(timeS * 1.1f + 2.3f)
-            glowPaint.color = GOLD_COLOR
+            glowPaint.color = ink.gold
             glowPaint.alpha = ((0.05f + 0.04f * lampBreath) * 255).toInt()
             canvas.drawCircle(
                 (lampCol + 0.5f) * charW, (lampRow + 0.4f) * lineH, lineH * 1.6f, glowPaint,
@@ -235,8 +236,8 @@ fun StyxCrossing(
             canvas.drawCircle(
                 (lampCol + 0.5f) * charW, (lampRow + 0.4f) * lineH, lineH * 0.75f, glowPaint,
             )
-            drawChar('●', lampCol, lampRow, GOLD_COLOR, 0.85f + 0.15f * lampBreath)
-            drawChar('┃', lampCol, lampRow + 1, POLE_COLOR, 0.55f)
+            drawChar('●', lampCol, lampRow, ink.gold, 0.85f + 0.15f * lampBreath)
+            drawChar('┃', lampCol, lampRow + 1, ink.pole, 0.55f)
             drawReflection(lampCol + 0.6f, 0.75f, 2.3f)
 
             // The skiff.
@@ -258,7 +259,7 @@ fun StyxCrossing(
 
                 if (boatAlpha > 0.02f) {
                     // Silhouette first: black cells so the waves don't shine through the hull.
-                    paint.color = android.graphics.Color.BLACK
+                    paint.color = ink.occluder
                     paint.alpha = (boatAlpha * 255).toInt()
                     for (r in sprite.chars.indices) {
                         val line = sprite.chars[r]
@@ -275,7 +276,7 @@ fun StyxCrossing(
                     val lx = (bx + lantern.second + 0.5f) * charW
                     val ly = (topRow + lantern.first + 0.5f) * lineH
                     val breathe = 0.5f + 0.5f * sin(timeS * 1.6f)
-                    glowPaint.color = GOLD_COLOR
+                    glowPaint.color = ink.gold
                     glowPaint.alpha = ((0.07f + 0.05f * breathe) * boatAlpha * 255).toInt()
                     canvas.drawCircle(lx, ly, lineH * 1.7f, glowPaint)
                     glowPaint.alpha = ((0.14f + 0.08f * breathe) * boatAlpha * 255).toInt()
@@ -288,10 +289,10 @@ fun StyxCrossing(
                             val ch = line[c]
                             if (ch == ' ') continue
                             val (color, a) = when (tone[c]) {
-                                'L' -> GOLD_COLOR to 1.0f
-                                'C' -> CLOAK_COLOR to 0.95f
-                                'P' -> POLE_COLOR to 0.85f
-                                else -> HULL_COLOR to 0.95f
+                                'L' -> ink.gold to 1.0f
+                                'C' -> ink.cloak to 0.95f
+                                'P' -> ink.pole to 0.85f
+                                else -> ink.hull to 0.95f
                             }
                             drawChar(ch, bx + c, topRow + r, color, a * boatAlpha)
                         }
@@ -312,7 +313,7 @@ fun StyxCrossing(
                             0.3f * (hsh - 0.5f)
                         drawChar(
                             WAKE_CHARS[(hsh * 100).toInt() % WAKE_CHARS.size],
-                            wc, wr, WAKE_COLOR,
+                            wc, wr, ink.sea,
                             0.65f * (1f - i.toFloat() / WAKE_LEN) * (1f - mistT(wc)),
                         )
                     }
@@ -334,7 +335,7 @@ fun StyxCrossing(
                             (0.4f + 0.6f * hsh / density)
                         drawChar(
                             chars[(hsh * 500).toInt() % chars.size],
-                            cx.toFloat(), cy.toFloat(), MIST_COLOR, a,
+                            cx.toFloat(), cy.toFloat(), ink.mist, a,
                         )
                     }
                 }
@@ -433,14 +434,42 @@ private val WAKE_CHARS = charArrayOf('⠐', '⠂', '⠄', '⠠', '⠆')
 private val REFLECT_CHARS = charArrayOf('⠒', '⠔', '⠂', '⠑', '⠄', '⠊')
 private val MIST_CHARS = charArrayOf('⠛', '⠿', '⠷', '⠧', '⠻', '⠟', '⠾')
 
-private val SEA_COLOR = StyxTeal.toArgbInt()
-private val WAKE_COLOR = StyxTeal.toArgbInt()
-private val GOLD_COLOR = ObolGold.toArgbInt()
-private val MIST_COLOR = MistGrey.toArgbInt()
-private val HULL_COLOR = 0xFFC7D1D9.toInt()
-private val CLOAK_COLOR = 0xFF44545E.toInt()
-private val POLE_COLOR = 0xFF8FA3AD.toInt()
-private val PIER_COLOR = 0xFF6E7F89.toInt()
+/** The scene's ink, pre-resolved to ARGB ints for the native canvas. Two skies:
+ *  night keeps the colors the crossing was born with; daybreak re-inks the same
+ *  drawing on paper — dark hull, deep water, gold gone from light to ink. */
+private class SceneInk(
+    val sea: Int,
+    val gold: Int,
+    val mist: Int,
+    /** The background's own color: hull/pier silhouettes that occlude the waves. */
+    val occluder: Int,
+    val hull: Int,
+    val cloak: Int,
+    val pole: Int,
+    val pier: Int,
+)
+
+private val NightInk = SceneInk(
+    sea = NightPalette.water.toArgbInt(),
+    gold = NightPalette.coin.toArgbInt(),
+    mist = NightPalette.mist.toArgbInt(),
+    occluder = NightPalette.night.toArgbInt(),
+    hull = 0xFFC7D1D9.toInt(),
+    cloak = 0xFF44545E.toInt(),
+    pole = 0xFF8FA3AD.toInt(),
+    pier = 0xFF6E7F89.toInt(),
+)
+
+private val DaybreakInk = SceneInk(
+    sea = DaybreakPalette.water.toArgbInt(),
+    gold = DaybreakPalette.coin.toArgbInt(),
+    mist = DaybreakPalette.mist.toArgbInt(),
+    occluder = DaybreakPalette.night.toArgbInt(),
+    hull = 0xFF3A4A54.toInt(),
+    cloak = 0xFF6E7F89.toInt(),
+    pole = 0xFF5C6E78.toInt(),
+    pier = 0xFF6E7F89.toInt(),
+)
 
 private fun androidx.compose.ui.graphics.Color.toArgbInt(): Int =
     android.graphics.Color.argb(

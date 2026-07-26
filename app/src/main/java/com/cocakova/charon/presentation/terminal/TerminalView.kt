@@ -28,9 +28,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import com.cocakova.charon.R
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.CellAttrs
@@ -65,23 +70,51 @@ fun TerminalView(
     val selection by session.selection.collectAsState()
     val scrollOffset by session.scrollOffset.collectAsState()
 
+    // Two-gear render loop. Hot: ride the frame clock while output is streaming
+    // (floods skip straight to the latest grid, cursor sits solid). Idle: a bare
+    // withFrameNanos loop keeps the Choreographer pumping at the display's refresh
+    // rate forever — 120 wakeups/s to blink a cursor twice a second — so once
+    // nothing has arrived for a grace window, the loop parks on the session's
+    // outputTick and blinks on a timer instead. The first byte of new output wakes
+    // it back into the hot gear within a frame, so echo latency is untouched.
     var frame by remember { mutableLongStateOf(0L) }
     var cursorOn by remember { mutableStateOf(true) }
-    LaunchedEffect(session) {
-        var lastDrawn = -1L
-        var lastChangeNanos = 0L
-        while (true) {
-            val now = withFrameNanos { it }
-            val g = session.term.generation
-            if (g != lastDrawn) {
-                lastDrawn = g
-                lastChangeNanos = now // output resets the blink: cursor solid while streaming
-                frame++
-            }
-            val on = ((now - lastChangeNanos) / CURSOR_BLINK_NANOS) % 2 == 0L
-            if (on != cursorOn) {
-                cursorOn = on
-                frame++
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(session, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            var lastDrawn = -1L
+            var lastChangeNanos = 0L
+            while (true) {
+                // Hot gear: per-frame against the generation counter.
+                while (true) {
+                    val now = withFrameNanos { it }
+                    val g = session.term.generation
+                    if (g != lastDrawn) {
+                        lastDrawn = g
+                        lastChangeNanos = now // output resets the blink: cursor solid while streaming
+                        frame++
+                    }
+                    val on = ((now - lastChangeNanos) / CURSOR_BLINK_NANOS) % 2 == 0L
+                    if (on != cursorOn) {
+                        cursorOn = on
+                        frame++
+                    }
+                    if (now - lastChangeNanos > STREAM_GRACE_NANOS) break
+                }
+                // Idle gear: 2 wakeups/s. Snapshot the tick BEFORE re-checking the
+                // generation — a burst landing between the two reads is then caught
+                // by the check (drop back to hot), and one landing after it trips
+                // first{} immediately off the StateFlow's current value. No gap.
+                var tick = session.outputTick.value
+                if (session.term.generation != lastDrawn) continue
+                while (true) {
+                    val woke = withTimeoutOrNull(CURSOR_BLINK_NANOS / 1_000_000) {
+                        session.outputTick.first { it != tick }
+                    }
+                    if (woke != null) break // the remote spoke — back to the frame clock
+                    cursorOn = !cursorOn
+                    frame++
+                }
             }
         }
     }
@@ -257,9 +290,14 @@ private fun nearSelection(sel: TerminalSession.Selection, cell: TextSelection.Ce
     return cell.row in lo..hi
 }
 
-/** The water's glow: the cursor is StyxTeal, the one always-on brand mark in the grid. */
+/** The water's glow: the cursor is Styx.water, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
 private const val CURSOR_BLINK_NANOS = 530_000_000L
+
+/** How long after the last remote burst the render loop keeps riding the frame
+ *  clock before parking on [TerminalSession.outputTick] — long enough that
+ *  intermittent streams (a build, htop's refresh) never feel a gear change. */
+private const val STREAM_GRACE_NANOS = 500_000_000L
 
 class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Float) {
     val text = Paint().apply {

@@ -42,10 +42,7 @@ import com.cocakova.charon.CharonApp
 import com.cocakova.charon.data.vault.Reliquary
 import com.cocakova.charon.data.vault.ReliquaryCodec
 import com.cocakova.charon.presentation.components.ChoicePill
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -140,13 +137,13 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                 "the reliquary",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = StyxTeal,
+                color = Styx.water,
             )
             Text(
                 "the whole fleet in one sealed file — moorings, keys of passage, " +
                     "the ferryman's ledger, snippets, charted channels",
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
                 modifier = Modifier.padding(top = 2.dp),
             )
             Spacer(Modifier.height(14.dp))
@@ -154,7 +151,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                 ChoicePill("seal the fleet", sealing) {
                     sealing = true; error = null
                 }
-                ChoicePill("open a reliquary", !sealing, selectedColor = ObolGold) {
+                ChoicePill("open a reliquary", !sealing, selectedColor = Styx.coin) {
                     sealing = false; error = null
                 }
             }
@@ -184,7 +181,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                 Text(
                     "this passphrase is the only key — there is no recovery on the far shore",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MistGrey,
+                    color = Styx.mist,
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Spacer(Modifier.height(12.dp))
@@ -195,20 +192,20 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                     },
                     enabled = pass.length >= 4 && pass == pass2 && !busy,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = StyxTeal, contentColor = Color.Black,
+                        containerColor = Styx.water, contentColor = Styx.night,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (busy) "sealing…" else "seal & stow") }
                 sealedWord?.let {
                     Spacer(Modifier.height(8.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = ObolGold)
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Styx.coin)
                 }
                 if (leftBehind.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "left behind (fingerprint refused): ${leftBehind.joinToString()}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = WarnEmber,
+                        color = Styx.ember,
                     )
                 }
             } else {
@@ -217,7 +214,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                         pickedUri?.lastPathSegment?.substringAfterLast('/')
                             ?.substringAfterLast(':')
                             ?: "choose a reliquary…",
-                        color = StyxTeal,
+                        color = Styx.water,
                     )
                 }
                 if (pickedUri != null && preview == null) {
@@ -265,7 +262,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                     Text(
                         "sealed ${p.exportedAt.take(10)} by Charon ${p.fromVersion}",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MistGrey,
+                        color = Styx.mist,
                     )
                     Spacer(Modifier.height(6.dp))
                     p.lines.forEach { line ->
@@ -283,7 +280,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                                     if (line.keptOurs > 0) append(" · ${line.keptOurs} kept")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (line.fresh + line.refreshed > 0) StyxTeal else MistGrey,
+                                color = if (line.fresh + line.refreshed > 0) Styx.water else Styx.mist,
                             )
                         }
                     }
@@ -307,7 +304,7 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                             },
                             enabled = p.anythingToLand && !busy,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = ObolGold, contentColor = Color.Black,
+                                containerColor = Styx.coin, contentColor = Styx.night,
                             ),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -320,12 +317,12 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
                             )
                         }
                     } else {
-                        Text(landedWord!!, style = MaterialTheme.typography.bodyMedium, color = ObolGold)
+                        Text(landedWord!!, style = MaterialTheme.typography.bodyMedium, color = Styx.coin)
                         if (keysAshore.isNotEmpty()) {
                             Text(
                                 "stayed aboard (fingerprint refused): ${keysAshore.joinToString()}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = WarnEmber,
+                                color = Styx.ember,
                                 modifier = Modifier.padding(top = 4.dp),
                             )
                         }
@@ -336,13 +333,13 @@ fun ReliquarySheet(onDismiss: () -> Unit) {
             if (busy) {
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(
-                    color = StyxTeal,
+                    color = Styx.water,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             error?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, style = MaterialTheme.typography.bodySmall, color = WarnEmber)
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Styx.ember)
             }
         }
     }

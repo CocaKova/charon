@@ -65,6 +65,10 @@ class TerminalSession(
     /** Rows scrolled back from the live bottom; 0 = following output. */
     val scrollOffset = MutableStateFlow(0)
 
+    /** Bumped once per remote burst — the renderer's idle loop sleeps on this
+     *  instead of riding the frame clock while nothing is arriving. */
+    val outputTick = MutableStateFlow(0L)
+
     fun feedRemote(bytes: ByteArray, offset: Int, length: Int) {
         synchronized(lock) {
             val before = term.screen.scrollbackSize
@@ -122,6 +126,8 @@ class TerminalSession(
                 }
             }
         }
+        // Outside the lock: waking the renderer must never hold up the reader.
+        outputTick.value += 1
     }
 
     /** Scroll the viewport by [deltaRows] (positive = toward older history). The
@@ -433,7 +439,16 @@ class TerminalSession(
     /** Paste text to the remote, bracketed-guarded when the app asked for it. */
     fun paste(text: String) {
         if (text.isEmpty()) return
-        trackInput(text) // pasted text counts toward the current command line
+        // Pasted text is not typing: a pasted block can carry prose or secrets that
+        // pass every shape rule, so the history only ever learns keystrokes. The
+        // line goes untrusted — no draft, no suggestions, nothing recorded on Enter.
+        synchronized(lock) {
+            if (_toll.value == null) {
+                lineTrusted = false
+                lineBuf.setLength(0)
+                _commandDraft.value = ""
+            }
+        }
         val wrapped = synchronized(lock) { KeyEncoder.paste(text, term.bracketedPaste) }
         sendText(wrapped)
     }

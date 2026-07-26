@@ -75,6 +75,9 @@ import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.autocomplete.CommandGate
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import com.cocakova.charon.autocomplete.SecretGate
 import com.cocakova.charon.autocomplete.Completer
 import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.autocomplete.RemoteContext
@@ -86,11 +89,7 @@ import com.cocakova.charon.presentation.forwards.ForwardsSheet
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
-import com.cocakova.charon.theme.MistGrey
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxBlack
-import com.cocakova.charon.theme.StyxTeal
-import com.cocakova.charon.theme.WarnEmber
+import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.cos
@@ -211,9 +210,16 @@ fun TerminalScreen(
     // own inventory — prose that slipped into the store (recorded into a remote
     // chat/REPL before the gate existed, or before the inventory landed) never
     // suggests back. Screened once per history/inventory change, not per keystroke.
-    val cleanHistory = remember(history, ctxVersion) {
+    val cleanHistory = remember(history, ctxVersion, hostId) {
         val installed = remoteContext?.commandSet.orEmpty()
-        history.filter { CommandGate.isCommandLine(it, installed) }
+        // This mooring's own lines speak first, then the rest of the fleet's; both
+        // walls run again here so anything learned before they existed stays silent.
+        val (mine, fleet) = history.partition { hostId != null && it.host == hostId }
+        (mine + fleet).asSequence()
+            .map { it.line }
+            .distinct()
+            .filter { CommandGate.isCommandLine(it, installed) && !SecretGate.carriesSecret(it) }
+            .toList()
     }
     val suggestions = remember(draft, cleanHistory, ctxVersion) {
         Completer.complete(draft, cleanHistory, remoteContext)
@@ -381,7 +387,7 @@ fun TerminalScreen(
                         color = MaterialTheme.colorScheme.background,
                         modifier = Modifier
                             .clip(RoundedCornerShape(20.dp))
-                            .background(if (c < 80 || r < 24) WarnEmber else StyxTeal)
+                            .background(if (c < 80 || r < 24) Styx.ember else Styx.water)
                             .padding(horizontal = 14.dp, vertical = 6.dp),
                     )
                     Spacer(Modifier.height(8.dp))
@@ -406,7 +412,7 @@ fun TerminalScreen(
                         color = MaterialTheme.colorScheme.background,
                         modifier = Modifier
                             .clip(RoundedCornerShape(20.dp))
-                            .background(ObolGold)
+                            .background(Styx.coin)
                             .clickable { session.scrollToBottom() }
                             .padding(horizontal = 18.dp, vertical = 7.dp),
                     )
@@ -437,7 +443,7 @@ fun TerminalScreen(
                         color = MaterialTheme.colorScheme.background,
                         modifier = Modifier
                             .clip(RoundedCornerShape(20.dp))
-                            .background(StyxTeal)
+                            .background(Styx.water)
                             .clickable {
                                 session.copySelection()?.let {
                                     clipboard.setText(AnnotatedString(it))
@@ -499,6 +505,7 @@ fun TerminalScreen(
                     session.sendText(s.insert)
                     session.trackInput(s.insert)
                 },
+                onForget = { s -> commandHistory.forget(s.display) },
             )
         } else if (draft.isBlank() && toll == null && state is TerminalSession.State.Connected) {
             SnippetBar(
@@ -590,7 +597,7 @@ private fun SessionSwitcher(
                 Text(
                     "⌂",
                     style = MaterialTheme.typography.titleMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                 )
             }
             Spacer(Modifier.width(4.dp))
@@ -612,7 +619,7 @@ private fun SessionSwitcher(
                 Text(
                     "+",
                     style = MaterialTheme.typography.titleMedium,
-                    color = StyxTeal,
+                    color = Styx.water,
                 )
             }
             // The hold: this session's SFTP deck.
@@ -625,7 +632,7 @@ private fun SessionSwitcher(
                 Text(
                     "⇅",
                     style = MaterialTheme.typography.titleMedium,
-                    color = ObolGold,
+                    color = Styx.coin,
                 )
             }
             // Charted channels: this session's port forwards.
@@ -638,7 +645,7 @@ private fun SessionSwitcher(
                 Text(
                     "⇆",
                     style = MaterialTheme.typography.titleMedium,
-                    color = MistGrey,
+                    color = Styx.mist,
                 )
             }
         }
@@ -662,6 +669,7 @@ private fun Waterline() {
         label = "waterlinePhase",
     )
     val still = MaterialTheme.colorScheme.surfaceVariant
+    val ripple = Styx.water.copy(alpha = 0.30f)
     // One Path for the ripple's whole life — this draws every frame forever, and a
     // fresh allocation per frame is pure garbage-collector chum.
     val path = remember { Path() }
@@ -679,7 +687,7 @@ private fun Waterline() {
         }
         // The still base keeps the rule legible; the teal ripple breathes over it.
         drawPath(path, still, style = Stroke(width = 1.dp.toPx()))
-        drawPath(path, StyxTeal.copy(alpha = 0.30f), style = Stroke(width = 1.dp.toPx()))
+        drawPath(path, ripple, style = Stroke(width = 1.dp.toPx()))
     }
 }
 
@@ -696,10 +704,10 @@ private fun SessionTab(
     val state by session.state.collectAsState()
     val dotColor by animateColorAsState(
         targetValue = when (state) {
-            is TerminalSession.State.Connected -> StyxTeal
-            is TerminalSession.State.Connecting -> ObolGold
-            is TerminalSession.State.Reconnecting -> ObolGold
-            is TerminalSession.State.Disconnected -> WarnEmber
+            is TerminalSession.State.Connected -> Styx.water
+            is TerminalSession.State.Connecting -> Styx.coin
+            is TerminalSession.State.Reconnecting -> Styx.coin
+            is TerminalSession.State.Disconnected -> Styx.ember
         },
         animationSpec = tween(400),
         label = "tabDot",
@@ -745,7 +753,7 @@ private fun SessionTab(
         Text(
             session.label,
             style = MaterialTheme.typography.labelMedium,
-            color = if (active) MaterialTheme.colorScheme.onSurface else MistGrey,
+            color = if (active) MaterialTheme.colorScheme.onSurface else Styx.mist,
             maxLines = 1,
         )
         Spacer(Modifier.width(4.dp))
@@ -758,7 +766,7 @@ private fun SessionTab(
             Text(
                 "×",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MistGrey,
+                color = Styx.mist,
             )
         }
     }
@@ -774,6 +782,7 @@ private fun SessionTab(
 private fun CommandSuggestions(
     suggestions: List<Suggestion>,
     onAccept: (Suggestion) -> Unit,
+    onForget: (Suggestion) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -784,18 +793,35 @@ private fun CommandSuggestions(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         suggestions.forEach { s ->
-            SuggestionChipPill(suggestion = s, onClick = { onAccept(s) })
+            SuggestionChipPill(
+                suggestion = s,
+                onClick = { onAccept(s) },
+                // Only remembered lines can be forgotten; grammar and live host
+                // offers aren't memory, so a long-press means nothing on them.
+                onLongClick = if (s.fromHistory) {
+                    { onForget(s) }
+                } else {
+                    null
+                },
+            )
             Spacer(Modifier.width(8.dp))
         }
     }
 }
 
-/** One autofill offer: a » sigil, the already-typed part dimmed, the rest in teal. */
+/** One autofill offer: a » sigil, the already-typed part dimmed, the rest in teal.
+ *  History chips answer a long-press by being forgotten. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SuggestionChipPill(suggestion: Suggestion, onClick: () -> Unit) {
+private fun SuggestionChipPill(
+    suggestion: Suggestion,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val haptic = LocalHapticFeedback.current
     val label = buildAnnotatedString {
-        withStyle(SpanStyle(color = MistGrey)) { append(suggestion.display.take(suggestion.matched)) }
-        withStyle(SpanStyle(color = StyxTeal, fontWeight = FontWeight.Medium)) {
+        withStyle(SpanStyle(color = Styx.mist)) { append(suggestion.display.take(suggestion.matched)) }
+        withStyle(SpanStyle(color = Styx.water, fontWeight = FontWeight.Medium)) {
             append(suggestion.display.substring(suggestion.matched))
         }
     }
@@ -803,11 +829,19 @@ private fun SuggestionChipPill(suggestion: Suggestion, onClick: () -> Unit) {
         modifier = Modifier
             .clip(RoundedCornerShape(9.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick?.let {
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                        it()
+                    }
+                },
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("»", fontFamily = CharonMono, fontSize = 13.sp, color = ObolGold)
+        Text("»", fontFamily = CharonMono, fontSize = 13.sp, color = Styx.coin)
         Spacer(Modifier.width(8.dp))
         Text(text = label, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
     }
@@ -848,7 +882,7 @@ private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, ObolGold.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+            .border(1.dp, Styx.coin.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
             .padding(horizontal = 14.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -860,13 +894,13 @@ private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
                     alpha = if (paid) 1f else breathe
                 }
                 .clip(CircleShape)
-                .background(ObolGold),
+                .background(Styx.coin),
         )
         Spacer(Modifier.width(9.dp))
         Text(
             if (paid) "the toll is paid" else "the ferryman asks the toll",
             style = MaterialTheme.typography.labelMedium,
-            color = if (paid) ObolGold else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (paid) Styx.coin else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -900,9 +934,9 @@ private fun CargoStrip(item: String?, percent: Int?) {
     val water = buildAnnotatedString {
         for (i in 0 until CARGO_WATER_WIDTH) {
             if (i >= bargeAt && i < bargeAt + BARGE.length) {
-                withStyle(SpanStyle(color = ObolGold)) { append(BARGE[i - bargeAt]) }
+                withStyle(SpanStyle(color = Styx.coin)) { append(BARGE[i - bargeAt]) }
             } else {
-                withStyle(SpanStyle(color = StyxTeal.copy(alpha = 0.55f))) {
+                withStyle(SpanStyle(color = Styx.water.copy(alpha = 0.55f))) {
                     append(WATER_FRAMES[(i + drift.toInt()) % WATER_FRAMES.length])
                 }
             }
@@ -922,10 +956,10 @@ private fun CargoStrip(item: String?, percent: Int?) {
             item?.let { append(" — ").append(it.take(28)) }
         }
         val label = buildAnnotatedString {
-            withStyle(SpanStyle(color = MistGrey)) { append(head) }
+            withStyle(SpanStyle(color = Styx.mist)) { append(head) }
             percent?.let {
                 append("  ")
-                withStyle(SpanStyle(color = ObolGold, fontWeight = FontWeight.Medium)) {
+                withStyle(SpanStyle(color = Styx.coin, fontWeight = FontWeight.Medium)) {
                     append("$it%")
                 }
             }
@@ -971,7 +1005,7 @@ private fun ConnectingPill(text: String) {
                 OAR_FRAMES[phase.toInt() % OAR_FRAMES.length].toString(),
                 fontFamily = CharonMono,
                 style = MaterialTheme.typography.bodyMedium,
-                color = StyxTeal,
+                color = Styx.water,
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -1004,7 +1038,7 @@ private fun ReconnectingOverlay(attempt: Int, onGiveUp: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(StyxBlack.copy(alpha = 0.82f)),
+            .background(Styx.night.copy(alpha = 0.82f)),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1013,7 +1047,7 @@ private fun ReconnectingOverlay(attempt: Int, onGiveUp: () -> Unit) {
                     .size(12.dp)
                     .graphicsLayer { alpha = pulse }
                     .clip(CircleShape)
-                    .background(ObolGold),
+                    .background(Styx.coin),
             )
             Spacer(Modifier.height(14.dp))
             Text(
@@ -1024,11 +1058,11 @@ private fun ReconnectingOverlay(attempt: Int, onGiveUp: () -> Unit) {
             Text(
                 "attempt $attempt",
                 style = MaterialTheme.typography.bodySmall,
-                color = MistGrey,
+                color = Styx.mist,
                 modifier = Modifier.padding(top = 4.dp),
             )
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onGiveUp) { Text("give up", color = MistGrey) }
+            TextButton(onClick = onGiveUp) { Text("give up", color = Styx.mist) }
         }
     }
 }
@@ -1045,7 +1079,7 @@ private fun CrossingFailedOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(StyxBlack.copy(alpha = 0.82f)),
+            .background(Styx.night.copy(alpha = 0.82f)),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -1058,7 +1092,7 @@ private fun CrossingFailedOverlay(
             Text(
                 "the crossing failed",
                 style = MaterialTheme.typography.titleLarge,
-                color = WarnEmber,
+                color = Styx.ember,
             )
             Text(
                 reason,
@@ -1098,14 +1132,14 @@ private fun ReturnedToShoreFlourish() {
         label = "shoreFade",
     )
     Box(
-        modifier = Modifier.fillMaxSize().background(StyxBlack),
+        modifier = Modifier.fillMaxSize().background(Styx.night),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 "returned to shore",
                 style = MaterialTheme.typography.titleLarge,
-                color = StyxTeal,
+                color = Styx.water,
                 modifier = Modifier.graphicsLayer { alpha = fade },
             )
             Spacer(Modifier.height(10.dp))
@@ -1114,7 +1148,7 @@ private fun ReturnedToShoreFlourish() {
                     .height(2.dp)
                     .width((168 * sweep).dp)
                     .clip(RoundedCornerShape(1.dp))
-                    .background(ObolGold),
+                    .background(Styx.coin),
             )
         }
     }

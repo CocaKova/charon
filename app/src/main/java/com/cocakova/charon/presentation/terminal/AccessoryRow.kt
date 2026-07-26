@@ -48,8 +48,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
-import com.cocakova.charon.theme.ObolGold
-import com.cocakova.charon.theme.StyxTeal
+import com.cocakova.charon.theme.Styx
 
 /** Sticky modifier state: off, armed for one keystroke, or latched on. */
 enum class Sticky { OFF, ARMED, LOCKED }
@@ -121,7 +120,7 @@ fun AccessoryRow(
 
         AccessoryKey("paste") { onPaste() }
         // Fn: swaps the middle of the row to the F-key page. Gold while on it.
-        AccessoryKey("fn", highlighted = fnPage, highlightColor = ObolGold) {
+        AccessoryKey("fn", highlighted = fnPage, highlightColor = Styx.coin) {
             fnPage = !fnPage
         }
         // Input-mode toggle: predictive (swipe/suggestions) vs raw key events.
@@ -129,7 +128,7 @@ fun AccessoryRow(
         AccessoryKey(
             if (rawInput) "raw" else "abc",
             highlighted = rawInput,
-            highlightColor = ObolGold,
+            highlightColor = Styx.coin,
         ) { onToggleInputMode() }
     }
 }
@@ -167,15 +166,15 @@ private fun StickyKey(
         label = label,
         container = when (state) {
             Sticky.OFF -> MaterialTheme.colorScheme.surfaceVariant
-            Sticky.ARMED -> StyxTeal
-            Sticky.LOCKED -> ObolGold
+            Sticky.ARMED -> Styx.water
+            Sticky.LOCKED -> Styx.coin
         },
         content = if (state == Sticky.OFF) MaterialTheme.colorScheme.onSurface
         else MaterialTheme.colorScheme.onPrimary,
         bold = state != Sticky.OFF,
         modifier = Modifier.combinedClickable(
             interactionSource = remember { MutableInteractionSource() },
-            indication = ripple(color = StyxTeal),
+            indication = ripple(color = Styx.water),
             onClick = {
                 // Arming reads as switching something on; clearing as off.
                 haptic.performHapticFeedback(
@@ -196,7 +195,7 @@ private fun StickyKey(
 private fun AccessoryKey(
     label: String,
     highlighted: Boolean = false,
-    highlightColor: Color = StyxTeal,
+    highlightColor: Color = Styx.water,
     repeatable: Boolean = false,
     onLongPress: (() -> Unit)? = null,
     onPress: () -> Unit,
@@ -286,7 +285,7 @@ private fun AccessoryKey(
     }.when_(!repeatable) {
         combinedClickable(
             interactionSource = interaction,
-            indication = ripple(color = StyxTeal),
+            indication = ripple(color = Styx.water),
             onClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                 onPress()
