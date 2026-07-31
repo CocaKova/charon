@@ -18,6 +18,15 @@ class Line(cols: Int) {
 
     private var combining: HashMap<Int, String>? = null
 
+    /**
+     * Apparitions whose top-left cell is on this line. Anchoring to the line object
+     * rather than a row number is what makes an image scroll with its text for free:
+     * the line itself is what moves up the grid and into scrollback. Lazily
+     * allocated — the overwhelming majority of lines are text.
+     */
+    var apparitions: MutableList<ApparitionPlacement>? = null
+        private set
+
     val cols: Int get() = codePoints.size
 
     init {
@@ -53,6 +62,29 @@ class Line(cols: Int) {
     fun clear(attr: Long = CellAttrs.DEFAULT) {
         fill(0, cols, SPACE, attr)
         isWrapped = false
+        // Clearing a line clears what was drawn over it, and a recycled line must
+        // never inherit the last occupant's shades.
+        apparitions = null
+    }
+
+    /** Anchor an apparition here; the newest of a given placement id wins. */
+    fun place(placement: ApparitionPlacement) {
+        val list = apparitions ?: ArrayList<ApparitionPlacement>(1).also { apparitions = it }
+        if (placement.placementId != 0L) {
+            list.removeAll { it.imageId == placement.imageId && it.placementId == placement.placementId }
+        }
+        // A program that redraws an unnamed image on one line every tick would
+        // otherwise stack placements forever; only the last few can be seen anyway.
+        while (list.size >= MAX_PLACEMENTS_PER_LINE) list.removeAt(0)
+        list.add(placement)
+    }
+
+    /** Drop anchored apparitions matching [predicate]; true if any went. */
+    fun unplace(predicate: (ApparitionPlacement) -> Boolean): Boolean {
+        val list = apparitions ?: return false
+        if (!list.removeAll(predicate)) return false
+        if (list.isEmpty()) apparitions = null
+        return true
     }
 
     /** Shift cells right by [n] starting at [col] (ICH); vacated cells get [attr]. */
@@ -116,5 +148,8 @@ class Line(cols: Int) {
 
     companion object {
         const val SPACE = 0x20
+
+        /** How many shades one line may hold before the oldest is let go. */
+        const val MAX_PLACEMENTS_PER_LINE = 8
     }
 }

@@ -21,11 +21,14 @@ alternate app icons, and a supporter mark. Nothing functional is ever behind it.
   biometrics. The vault exports to a single passphrase-encrypted file with a documented
   format — no cloud account, ever.
 
-## What's aboard (v1.0)
+## What's aboard (v1.1)
 
 - From-scratch VT/xterm terminal: truecolor, mouse reporting, scrollback + selection into
   scrollback, bracketed paste, pinch-zoom, per-session color liveries — corpus-tested
   against recorded vim/htop/tmux sessions and conformance-checked (see `docs/TERMINAL.md`)
+- **Inline images** — the Kitty graphics protocol and iTerm2's `imgcat`, drawn in the grid
+  and scrolling with the text. Tap one for a full-screen lightbox with pinch-zoom, save
+  and share: on a phone an inline image is a photo, not a dead rectangle
 - Accessory key row with sticky/lockable Ctrl-Alt, long-press variants, auto-repeat, F-keys
 - Host-aware autocomplete: command grammar plus live probes of what's actually installed
   and running on the host (tmux sessions, docker containers, systemd units, remote paths) —

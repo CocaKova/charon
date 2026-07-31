@@ -48,9 +48,47 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
 The **input/interaction** surface (accessory row, gestures, selection, mouse, IME) is
 documented end-to-end in `docs/INPUT.md`.
 
+## v1.1 — Apparitions (inline images)
+
+*The shades made visible on the black water.* Two wire protocols in, one placement
+model out. See `docs/FRONTIER.md` Tier 1 for the why.
+
+- [x] **Kitty graphics protocol** — `ESC _ G k=v,… ; base64 ESC \`. The parser now
+  splits **APC** out of the old SOS/PM/APC discard state (`Parser.apcDispatch`);
+  SOS and PM keep being thrown away.
+  - actions `a=t` (transmit), `a=T` (transmit + display), `a=p` (put a stored
+    image), `a=q` (query), `a=d` (delete)
+  - formats `f=100` (PNG/JPEG/GIF/WebP), `f=24` (RGB), `f=32` (RGBA)
+  - `t=d` direct transmission only; `t=f/t/s` answer `EBADF` rather than lying
+  - chunking (`m=1`/`m=0`), zlib payloads (`o=z`)
+  - ids (`i`), image numbers (`I`), placement ids (`p`), z-index (`z`)
+  - source crop `x,y,w,h`; cell size `c,r`; cursor policy `C`; quiet `q=1/2`
+  - deletes `d=a/A` (all) and `d=i/I` (by image), uppercase also frees the pixels
+- [x] **iTerm2 inline images** — `OSC 1337 ; File=inline=1;width=…;height=… : base64`.
+  `width`/`height` in cells, `Npx`, `N%` or `auto`; `preserveAspectRatio` honoured.
+  A `File=` without `inline=1` is a file transfer and is deliberately ignored.
+- [x] **XTVERSION** (`CSI > q` → `DCS > | Charon(<version>) ST`) and **`CSI 16 t`**
+  (cell size in pixels). Without these, tools that gate their graphics path on
+  recognising the terminal never even try.
+- [x] **PTY pixel dimensions** — `ws_xpixel`/`ws_ypixel` are sent on PTY allocation
+  and on every window change (including a pinch that only changes the cell size).
+  A PTY reporting 0×0 sends `kitten icat` down its no-graphics path before a single
+  escape reaches us.
+- [x] **Placement model** — an image is anchored to the `Line` its top-left cell sits
+  on (`Line.apparitions`), not to a row number. The line object is what moves up the
+  grid and into scrollback, so images scroll with their text for free, and
+  `Line.clear()` drops them — clearing a line clears what was drawn over it.
+- [x] **Byte budget** — `ApparitionStore` holds transmitted images under an LRU cap
+  (24 MB); the app-side `ApparitionCache` caps decoded bitmaps separately (48 MB) and
+  keys on image *identity*, so a re-transmitted id never draws the old picture.
+
+Not aboard yet, and honest about it: **Sixel** (`DCS q`), Kitty **animation**
+(`a=f`/`a=c`, answered `ENOTSUP`), Kitty **Unicode placeholders** (`U=1`, the
+tmux-safe placement path), and **relative/virtual placements**.
+
 ## Explicit non-goals (until someone asks)
 
-Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), sixel, OSC 8
+Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), OSC 8
 (v1.x), perfect grapheme clustering (we match remote `wcwidth()` — that's what programs
 lay out against).
 

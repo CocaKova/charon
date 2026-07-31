@@ -87,6 +87,7 @@ import com.cocakova.charon.data.db.SnippetEntity
 import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.presentation.forwards.ForwardsSheet
 import com.cocakova.charon.ssh.TerminalSession
+import com.cocakova.charon.terminal.Apparition
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.Styx
@@ -130,6 +131,10 @@ fun TerminalScreen(
     var alt by remember { mutableStateOf(Sticky.OFF) }
     var inputView by remember { mutableStateOf<TerminalInputView?>(null) }
     val inputFocus = remember { FocusRequester() }
+    // Decoded shades belong to the session, not to a recomposition: the renderer and
+    // the lightbox share one cache so opening an image costs no second decode.
+    val apparitionCache = remember(session.id) { ApparitionCache() }
+    var lightbox by remember(session.id) { mutableStateOf<Apparition?>(null) }
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("charon", Context.MODE_PRIVATE) }
     // Pinch-zoomable font size, persisted; clamped to a legible band. The write is
@@ -356,7 +361,19 @@ fun TerminalScreen(
                     // full-screen TUIs (btop, htop) refuse to draw below 80×24.
                     fontSizeSp = (fontSizeSp * zoom).coerceIn(6f, 32f)
                 },
+                apparitions = apparitionCache,
+                onApparitionTap = { lightbox = it },
             )
+
+            // A shade held up to the light: full screen, pinch to look closer, gold
+            // to carry it ashore. The reason to want images on a phone at all.
+            lightbox?.let { shade ->
+                ApparitionLightbox(
+                    image = shade,
+                    cache = apparitionCache,
+                    onDismiss = { lightbox = null },
+                )
+            }
 
             // Grid-size readout: flashes cols × rows whenever the grid re-snaps
             // (pinch-zoom, keyboard up/down). Teal when full-screen TUIs fit; ember
@@ -502,6 +519,7 @@ fun TerminalScreen(
                 suggestions = suggestions,
                 onAccept = { s ->
                     session.scrollToBottom()
+                    inputView?.textLandedOutsideIme()
                     session.sendText(s.insert)
                     session.trackInput(s.insert)
                 },
@@ -513,6 +531,7 @@ fun TerminalScreen(
                 hostId = hostId,
                 onType = { cmd ->
                     session.scrollToBottom()
+                    inputView?.textLandedOutsideIme()
                     session.sendText(cmd)
                     session.trackInput(cmd)
                 },
@@ -529,11 +548,16 @@ fun TerminalScreen(
             onAltLock = { alt = lockMod(alt) },
             onKey = { key ->
                 // Special keys carry Alt (ESC prefix) but not Ctrl; encode then emit.
+                inputView?.textLandedOutsideIme()
                 emit(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp), singleChar = false)
             },
-            onText = { emit(it, it.length == 1) },
+            onText = {
+                inputView?.textLandedOutsideIme()
+                emit(it, it.length == 1)
+            },
             onPaste = {
                 session.scrollToBottom()
+                inputView?.textLandedOutsideIme()
                 clipboard.getText()?.text?.let { session.paste(it) }
             },
             rawInput = inputMode == TerminalInputView.Mode.RAW,

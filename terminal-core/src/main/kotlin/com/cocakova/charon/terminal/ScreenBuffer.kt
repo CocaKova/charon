@@ -99,6 +99,12 @@ class ScreenBuffer(
         scrollback.clear()
     }
 
+    /** Every line we still hold, history first. Used to sweep anchored apparitions. */
+    inline fun forEachLine(action: (Line) -> Unit) {
+        for (i in 0 until scrollbackSize) action(scrollbackLine(i))
+        for (r in 0 until rows) action(line(r))
+    }
+
     private fun pushScrollback(line: Line) {
         scrollback.addLast(line)
         while (scrollback.size > maxScrollback) scrollback.removeFirst()

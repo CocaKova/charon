@@ -21,6 +21,8 @@ class TerminalEmulator(
     basePalette: IntArray? = null,
     private val initialFg: Int = 0xE6EDF3,
     private val initialBg: Int = 0x000000,
+    /** Reported by XTVERSION so remote tools can recognise us and light up. */
+    private val versionName: String = "1.0",
 ) : ParserSink {
 
     var cols: Int = initialCols
@@ -80,9 +82,17 @@ class TerminalEmulator(
     var defaultFg = initialFg
     var defaultBg = initialBg
 
-    /** Pixel cell size, set by the renderer; used for CSI 14t reports. */
+    /** Pixel cell size, set by the renderer; used for CSI 14t/16t reports and for
+     *  working out how many cells an image claims. */
     var cellWidthPx = 8
     var cellHeightPx = 16
+
+    /**
+     * Apparitions — inline images. The engine reads the Kitty and iTerm2 wire
+     * protocols and hands back a rectangle of grid; anchoring it to a line and
+     * moving the cursor around it is this class's job.
+     */
+    val apparitions = ApparitionEngine()
 
     var title = ""
         private set
@@ -267,7 +277,13 @@ class TerminalEmulator(
                 }
                 else -> {}
             }
-            ">" -> if (final == 'c') onResponse("$CSI>41;377;0c") // DA2: xterm-ish
+            ">" -> when (final) {
+                'c' -> onResponse("$CSI>41;377;0c") // DA2: xterm-ish
+                // XTVERSION. Without a name, tools that gate their modern paths on
+                // knowing the terminal — `kitten icat` among them — never even try.
+                'q' -> onResponse("${DCS}>|Charon($versionName)$ST")
+                else -> {}
+            }
             "!" -> if (final == 'p') softReset()                  // DECSTR
             " " -> if (final == 'q') cursorStyle = params.get(0, 1) // DECSCUSR
             else -> {}
@@ -328,6 +344,9 @@ class TerminalEmulator(
             }
             't' -> when (params.get(0, 0)) {
                 14 -> onResponse("${CSI}4;${rows * cellHeightPx};${cols * cellWidthPx}t")
+                // Cell size in pixels: how an image sizer works out cells-per-pixel
+                // when the PTY carries no pixel dimensions.
+                16 -> onResponse("${CSI}6;$cellHeightPx;${cellWidthPx}t")
                 18 -> onResponse("${CSI}8;$rows;${cols}t")
             }
             else -> {}
@@ -360,14 +379,87 @@ class TerminalEmulator(
                     onShellMark?.invoke(kind, extra)
                 }
             }
+            // iTerm2 inline images — what `imgcat` speaks.
+            1337 -> applyGraphics(apparitions.iterm2(arg, gridFacts()))
             else -> {} // OSC 52 clipboard lands in v0.4 behind consent
         }
+        touch()
+    }
+
+    /** The Kitty graphics protocol arrives here: `ESC _ G … ESC \`. */
+    override fun apcDispatch(payload: String) {
+        applyGraphics(apparitions.kitty(payload, gridFacts()))
         touch()
     }
 
     override fun dcsHook(params: CsiParams, collected: String, final: Char) {}
     override fun dcsPut(codePoint: Int) {}
     override fun dcsUnhook() {}
+
+    // ------------------------------------------------------------- apparitions
+
+    private fun gridFacts() = ApparitionEngine.Grid(
+        cellWidthPx = cellWidthPx,
+        cellHeightPx = cellHeightPx,
+        cursorCol = cursorX,
+        cols = cols,
+        rows = rows,
+    )
+
+    private fun applyGraphics(result: ApparitionEngine.Result?) {
+        if (result == null) return
+        result.response?.let(onResponse)
+        result.delete?.let(::applyDelete)
+        result.place?.let { place(it, moveCursor = result.moveCursor) }
+    }
+
+    /**
+     * Anchor a placement to the line the cursor is on, then step the cursor past it
+     * so the rows the image occupies are real rows — they scroll, they enter
+     * scrollback, and whatever the remote prints next lands below the picture
+     * instead of underneath it.
+     */
+    private fun place(placement: ApparitionPlacement, moveCursor: Boolean) {
+        pendingWrap = false
+        screen.line(cursorY).place(placement)
+        markAllDirty()
+        if (!moveCursor) return
+        repeat(placement.rows - 1) { linefeed() }
+        cursorX = (placement.startCol + placement.cols).coerceIn(0, cols - 1)
+    }
+
+    private fun applyDelete(delete: ApparitionEngine.Delete) {
+        when (delete) {
+            is ApparitionEngine.Delete.All -> {
+                forEachScreenLine { it.unplace { true } }
+                if (delete.freeData) apparitions.store.clear()
+            }
+            is ApparitionEngine.Delete.Image -> {
+                forEachScreenLine { line ->
+                    line.unplace {
+                        it.imageId == delete.imageId &&
+                            (delete.placementId == 0L || it.placementId == delete.placementId)
+                    }
+                }
+                if (delete.freeData) apparitions.store.remove(delete.imageId)
+            }
+            ApparitionEngine.Delete.AtCursor -> {
+                // A placement covers the cursor when its span reaches down to it.
+                for (r in 0..cursorY) {
+                    val depth = cursorY - r
+                    screen.line(r).unplace {
+                        depth < it.rows && cursorX in it.startCol until (it.startCol + it.cols)
+                    }
+                }
+            }
+        }
+        markAllDirty()
+    }
+
+    private inline fun forEachScreenLine(action: (Line) -> Unit) {
+        primary.forEachLine(action)
+        alt.forEachLine(action)
+    }
 
     // ------------------------------------------------------------------ operations
 
@@ -661,6 +753,8 @@ class TerminalEmulator(
         title = ""
         palette.reset()
         lastPrinted = -1
+        // The lines are gone, so their anchors are; drop the pixels behind them too.
+        apparitions.store.clear()
         markAllDirty()
     }
 
@@ -842,6 +936,7 @@ class TerminalEmulator(
     companion object {
         private const val CSI = "\u001B["
         private const val OSC = "\u001B]"
+        private const val DCS = "\u001BP"
         private const val ST = "\u001B\\"
 
         /** Sentinel returned by [drainDirty] meaning "redraw everything". */

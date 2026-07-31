@@ -1,5 +1,6 @@
 package com.cocakova.charon.ssh
 
+import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
@@ -32,8 +33,9 @@ class TerminalSession(
     /** Bytes headed to the remote (SSH channel stdin). */
     var onOutput: ((ByteArray) -> Unit)? = null
 
-    /** PTY window-change hook, wired by the SSH layer. */
-    var onResize: ((cols: Int, rows: Int) -> Unit)? = null
+    /** PTY window-change hook, wired by the SSH layer. The pixel size rides along:
+     *  image tools size their output from the PTY before asking the terminal. */
+    var onResize: ((cols: Int, rows: Int, widthPx: Int, heightPx: Int) -> Unit)? = null
 
     sealed class State {
         data object Connecting : State()
@@ -60,6 +62,9 @@ class TerminalSession(
         basePalette = basePalette,
         initialFg = initialFg,
         initialBg = initialBg,
+        // XTVERSION answers with the real build: a tool that recognises Charon can
+        // light up its graphics path instead of falling back to blocks of colour.
+        versionName = BuildConfig.VERSION_NAME,
     )
 
     /** Rows scrolled back from the live bottom; 0 = following output. */
@@ -492,17 +497,22 @@ class TerminalSession(
     /** Renderer-driven resize: grid first, then the PTY. */
     fun resize(cols: Int, rows: Int, cellWidthPx: Int, cellHeightPx: Int) {
         val changed = synchronized(lock) {
-            val c = term.cols != cols || term.rows != rows
+            // A pinch can change the cell size without changing the grid; the PTY
+            // still needs telling, or image tools keep sizing to the old cells.
+            val c = term.cols != cols || term.rows != rows ||
+                term.cellWidthPx != cellWidthPx || term.cellHeightPx != cellHeightPx
+            val grid = term.cols != cols || term.rows != rows
             term.cellWidthPx = cellWidthPx
             term.cellHeightPx = cellHeightPx
-            if (c) term.resize(cols, rows)
-            c
+            if (grid) term.resize(cols, rows)
+            c to grid
         }
-        if (changed) {
+        val (any, grid) = changed
+        if (grid) {
             clearSelection() // the old cells no longer mean anything at the new geometry
             scrollToBottom()
             dims.value = cols to rows
-            onResize?.invoke(cols, rows)
         }
+        if (any) onResize?.invoke(cols, rows, cols * cellWidthPx, rows * cellHeightPx)
     }
 }

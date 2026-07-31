@@ -35,5 +35,17 @@
                 android:value="Maintains user-initiated interactive SSH terminal sessions while the app is in the background" />
         </service>
 
+        <!-- Shades leave the ferry through here: an apparition staged in the cache
+             is handed to the share sheet as a one-off grant, never as a file path. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.shades"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shade_paths" />
+        </provider>
+
     </application>
 </manifest>
