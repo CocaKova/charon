@@ -751,6 +751,7 @@ class TerminalEmulator(
         reverseVideo = false
         linefeedMode = false
         title = ""
+        onTitle("")
         palette.reset()
         lastPrinted = -1
         // The lines are gone, so their anchors are; drop the pixels behind them too.

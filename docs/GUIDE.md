@@ -188,6 +188,9 @@ From the session switcher, **⇆** charts channels:
 
 - Each connection is a tab in the switcher; the Dock stays reachable (⌂) with
   crossings live. A notification shows how many are at sea.
+- A tab is named by the remote's window title when it sets one (falling back to
+  `user@host`). With `set -g set-titles on` in tmux — and, say,
+  `set -g set-titles-string "#W"` — each tab wears its tmux window's name.
 - **Clean exits** (`exit`, logout) just end. **Drops** redial with backoff, and the
   instant the network returns (airplane mode off, Wi-Fi back) Charon redials
   immediately.
