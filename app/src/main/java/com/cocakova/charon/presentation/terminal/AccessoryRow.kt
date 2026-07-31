@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -225,6 +226,11 @@ private fun AccessoryKey(
     val haptic = LocalHapticFeedback.current
     var held by remember { mutableStateOf(false) }
     var holdFired by remember { mutableStateOf(false) }
+    // The repeatable gesture below is keyed on Unit so it survives recomposition —
+    // which means it captures its lambdas exactly once. onPress closes over the
+    // active session, and a tab switch hands this key a new one: read it through
+    // rememberUpdatedState or every arrow keeps steering the ferry you stepped off.
+    val currentOnPress by rememberUpdatedState(onPress)
     if (repeatable) {
         LaunchedEffect(held) {
             if (held) {
@@ -234,7 +240,7 @@ private fun AccessoryKey(
                 holdFired = true
                 haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                 while (true) {
-                    onPress()
+                    currentOnPress()
                     delay(60)
                 }
             }
@@ -278,7 +284,7 @@ private fun AccessoryKey(
                 held = false
                 if (fire && !holdFired) {
                     haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
-                    onPress()
+                    currentOnPress()
                 }
             }
         }

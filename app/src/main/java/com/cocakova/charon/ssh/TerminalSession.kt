@@ -55,9 +55,15 @@ class TerminalSession(
     /** Live grid dimensions, for chrome that shows cols x rows. */
     val dims = MutableStateFlow(cols to rows)
 
+    /** The remote's window title (OSC 0/2) — tmux with `set-titles on` keeps this at
+     *  the current window's name, so the tab reads "vim" instead of user@host. Blank
+     *  until the remote speaks one; the switcher falls back to [label]. */
+    val title = MutableStateFlow("")
+
     val term = TerminalEmulator(
         cols, rows,
         onResponse = { sendText(it) }, // DA/DSR/CPR replies go straight back out
+        onTitle = { title.value = it },
         onBell = {},
         basePalette = basePalette,
         initialFg = initialFg,

@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,6 +70,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -726,6 +728,9 @@ private fun SessionTab(
     onClose: () -> Unit,
 ) {
     val state by session.state.collectAsState()
+    // The remote's window title when it speaks one (tmux `set-titles on` keeps it at
+    // the current window's name), else the mooring's user@host.
+    val title by session.title.collectAsState()
     val dotColor by animateColorAsState(
         targetValue = when (state) {
             is TerminalSession.State.Connected -> Styx.water
@@ -775,10 +780,12 @@ private fun SessionTab(
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            session.label,
+            title.trim().ifEmpty { session.label },
             style = MaterialTheme.typography.labelMedium,
             color = if (active) MaterialTheme.colorScheme.onSurface else Styx.mist,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 160.dp),
         )
         Spacer(Modifier.width(4.dp))
         Box(
