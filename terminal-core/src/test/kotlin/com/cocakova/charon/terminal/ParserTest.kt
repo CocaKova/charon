@@ -209,10 +209,25 @@ class ParserTest {
         }
         val p = Parser(sink)
         p.feed("$ESC]")
-        val chunk = "x".repeat(8192)
-        repeat(10) { p.feed(chunk) } // 80 KB > cap
+        // The cap is generous (inline images ride OSC 1337), so overrun it in bulk.
+        val chunk = "x".repeat(Parser.MAX_OSC_LENGTH / 4)
+        repeat(5) { p.feed(chunk) }
         p.feed(BEL)
         assertEquals(Parser.MAX_OSC_LENGTH, got)
+    }
+
+    @Test
+    fun apcPayloadIsCapped() {
+        var got = -1
+        val sink = object : RecordingSink() {
+            override fun apcDispatch(payload: String) { got = payload.length }
+        }
+        val p = Parser(sink)
+        p.feed("${ESC}_")
+        val chunk = "x".repeat(Parser.MAX_APC_LENGTH / 4)
+        repeat(5) { p.feed(chunk) }
+        p.feed("$ESC\\")
+        assertEquals(Parser.MAX_APC_LENGTH, got)
     }
 
     @Test

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the staging yard for shares is reachable; nothing else in the app is. -->
+<paths>
+    <cache-path name="shades" path="shades/" />
+</paths>

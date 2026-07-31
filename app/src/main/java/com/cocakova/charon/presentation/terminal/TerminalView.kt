@@ -1,6 +1,7 @@
 package com.cocakova.charon.presentation.terminal
 
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import com.cocakova.charon.R
 import com.cocakova.charon.ssh.TerminalSession
+import com.cocakova.charon.terminal.Apparition
 import com.cocakova.charon.terminal.CellAttrs
 import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.TerminalEmulator
@@ -57,6 +59,10 @@ fun TerminalView(
     fontSizeSp: Float = 14f,
     onRequestFocus: () -> Unit = {},
     onZoom: (Float) -> Unit = {},
+    /** Decoded shades, shared with the lightbox so a tap costs no second decode. */
+    apparitions: ApparitionCache? = null,
+    /** A shade was touched: the lightbox opens on it. */
+    onApparitionTap: (Apparition) -> Unit = {},
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -149,6 +155,15 @@ fun TerminalView(
         return TextSelection.Cell(v.row - session.scrollOffset.value, v.col)
     }
 
+    /** The shade under a finger, if the finger landed on one. */
+    fun apparitionUnder(pos: Offset): Apparition? = synchronized(session.lock) {
+        if (session.term.apparitions.store.count == 0) return@synchronized null
+        val hits = visibleApparitions(
+            session.term, session.scrollOffset.value, paints.cellWidth, paints.cellHeight,
+        )
+        apparitionAt(hits, pos.x - paints.padX, pos.y - paints.padY)?.image
+    }
+
     // Selection edge-crawl: while a select-drag holds at the glass's top or bottom,
     // the viewport steps a row at a time (+1 = older) and the selection's focus rides
     // the revealed edge — how a finger reaches text that's off-screen.
@@ -192,8 +207,12 @@ fun TerminalView(
                 detectTapGestures(
                     onLongPress = { pos -> session.selectWordAt(selCellOf(pos)) },
                     onTap = { pos ->
+                        // A shade answers the tap before anything else: on a phone an
+                        // inline image is a photo you can open, not a dead rectangle.
+                        val shade = apparitionUnder(pos)
                         when {
                             session.selection.value != null -> session.clearSelection()
+                            shade != null -> onApparitionTap(shade)
                             session.mouseActive -> {
                                 session.mouseClick(viewCellOf(pos))
                                 onRequestFocus()
@@ -270,7 +289,7 @@ fun TerminalView(
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
                     size.width, size.height, cursorOn, selection, scrollOffset,
-                    session.cursorColor,
+                    session.cursorColor, apparitions,
                 )
             }
         }
@@ -309,6 +328,19 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
         hinting = Paint.HINTING_ON
     }
     val fill = Paint()
+
+    /** Bitmaps go down filtered — a scaled photo should not look like a mosaic. */
+    val image = Paint().apply {
+        isFilterBitmap = true
+        isAntiAlias = true
+    }
+    private val srcRect = Rect()
+    private val dstRect = Rect()
+
+    /** Scratch rects, reused: an image pass must not allocate per frame. */
+    fun srcScratch(): Rect = srcRect
+    fun dstScratch(): Rect = dstRect
+
     val cellWidth = text.measureText("M")
     private val fm = text.fontMetrics
     private val glyphHeight = fm.descent - fm.ascent
@@ -333,6 +365,7 @@ private fun drawTerminal(
     selection: TerminalSession.Selection?,
     scrollOffset: Int,
     cursorColor: Int = CURSOR_TEAL,
+    apparitions: ApparitionCache? = null,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -347,6 +380,18 @@ private fun drawTerminal(
     val cw = p.cellWidth
     val ch = p.cellHeight
     val sb = StringBuilder(term.cols)
+
+    // Shades rise before the text: an image is the backdrop its caption sits on, and
+    // a placement that overhangs the glass is clipped rather than painted over chrome.
+    if (apparitions != null && term.apparitions.store.count > 0) {
+        val hits = visibleApparitions(term, scrollOffset, cw, ch)
+        if (hits.isNotEmpty()) {
+            canvas.save()
+            canvas.clipRect(0f, 0f, width - p.padX, height - p.padY)
+            drawApparitions(canvas, hits, apparitions, p.image, p.srcScratch(), p.dstScratch())
+            canvas.restore()
+        }
+    }
 
     // Selection tint under the glyphs: a translucent wash of the river's teal.
     if (selection != null) {

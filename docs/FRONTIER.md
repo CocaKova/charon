@@ -27,6 +27,10 @@ pocket, so "your build finished" can be a buzz on your wrist and an image can be
 
 ## Tier 1 — Apparitions (inline image rendering) ★ the marquee
 
+> **Status: SHIPPED in v1.1** — Kitty + iTerm2 + the lightbox. Sixel, animation and
+> Unicode placeholders are the remaining tail; see `docs/TERMINAL.md` §v1.1 for the
+> exact surface and `docs/GUIDE.md` "shades on the water" for the user's view.
+
 *The shades made visible on the black water.* Images rendered in the terminal grid — the
 feature Jonny asked for by name, and the single biggest "this is a real terminal" signal.
 
@@ -70,6 +74,17 @@ failure = "the shade would not hold its shape."
 Sixel.** We plant the flag on the standard Ghostty/WezTerm are judged on (`kitten icat`, `timg`,
 placements, reflow-safe Unicode placeholders) first, pick up iTerm2 `imgcat` compatibility
 second for near-free, and add the Sixel legacy long tail last. All three eventually ship.
+
+**What landed (v1.1)** — Kitty and iTerm2 both, plus the lightbox (tap → full screen,
+pinch, ⇣ carry ashore / send onward). The foundation guesses above proved right with
+one correction worth recording: the placement layer did **not** need to live in
+`ScreenBuffer`. Anchoring a placement to the `Line` object itself is strictly better —
+the line is what already moves up the grid and into scrollback, so images scroll,
+evict and clear correctly without a single row-number calculation.
+
+**Still to come on this tier:** Sixel (`DCS q` + a band decoder), Kitty animation
+(`a=f`/`a=c`), Unicode placeholders (`U=1` — the path that survives tmux), and
+"send a shade across the river" (camera/gallery → terminal).
 
 ---
 

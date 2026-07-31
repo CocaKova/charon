@@ -23,7 +23,7 @@ private const val TAG = "CharonSsh"
 /** Work items for the single channel-writer thread. */
 private sealed class ChannelOp {
     class Write(val bytes: ByteArray) : ChannelOp()
-    class Resize(val cols: Int, val rows: Int) : ChannelOp()
+    class Resize(val cols: Int, val rows: Int, val widthPx: Int, val heightPx: Int) : ChannelOp()
     data object Stop : ChannelOp()
 }
 
@@ -114,10 +114,21 @@ class SshjEngine : SshEngine {
             authenticate(client, config)
 
             val sshSession = client.startSession()
-            val (cols, rows) = synchronized(session.lock) {
-                session.term.cols to session.term.rows
+            // Pixel dimensions travel with the window size. Image tools ask the PTY
+            // how big a cell is before they ask the terminal; a PTY reporting 0x0
+            // sends `kitten icat` down its no-graphics path before we ever see it.
+            val (cols, rows, pixels) = synchronized(session.lock) {
+                Triple(
+                    session.term.cols,
+                    session.term.rows,
+                    session.term.cols * session.term.cellWidthPx to
+                        session.term.rows * session.term.cellHeightPx,
+                )
             }
-            sshSession.allocatePTY("xterm-256color", cols, rows, 0, 0, emptyMap<PTYMode, Int>())
+            sshSession.allocatePTY(
+                "xterm-256color", cols, rows, pixels.first, pixels.second,
+                emptyMap<PTYMode, Int>(),
+            )
             val shell = sshSession.startShell()
 
             // All channel traffic is marshalled through one queue + thread: onOutput
@@ -137,7 +148,9 @@ class SshjEngine : SshEngine {
                                 shell.outputStream.flush()
                             }
                             is ChannelOp.Resize ->
-                                shell.changeWindowDimensions(op.cols, op.rows, 0, 0)
+                                shell.changeWindowDimensions(
+                                    op.cols, op.rows, op.widthPx, op.heightPx,
+                                )
                         }
                     }
                 } catch (e: Exception) {
@@ -146,7 +159,7 @@ class SshjEngine : SshEngine {
                 }
             }
             session.onOutput = { bytes -> outbound.put(ChannelOp.Write(bytes)) }
-            session.onResize = { cols, rows -> outbound.put(ChannelOp.Resize(cols, rows)) }
+            session.onResize = { c, r, wPx, hPx -> outbound.put(ChannelOp.Resize(c, r, wPx, hPx)) }
 
             // Startup command (tmux auto-attach and friends): typed into the fresh
             // shell so it runs on every crossing — including an auto-reconnect redial,

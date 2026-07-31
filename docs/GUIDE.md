@@ -95,6 +95,32 @@ xterm-conformance-tested (see `TERMINAL.md`).
 (❯) — tap to type one, long-press to edit. Snippets can be global or pinned to one
 host. Manage them from the ⇅/⇆ area in the session switcher.
 
+**Shades on the water — pictures in the terminal.** Charon draws inline images
+right in the grid. Anything that speaks the **Kitty graphics protocol** or
+**iTerm2's `imgcat`** works with no setup on your side:
+
+```sh
+kitten icat photo.jpg      # kitty's own viewer
+timg screenshot.png        # timg, and most modern image tools
+imgcat photo.jpg           # the iTerm2 script
+```
+
+Images scroll with the text and stay in your scrollback, exactly like the lines
+around them.
+
+Then the part no desktop terminal can do: **tap a picture**. It opens full screen —
+pinch or double-tap to look closer, drag to move around, tap the dark to let it
+sink back. Two pills at the bottom:
+
+- **⇣ carry ashore** — save it wherever you like (your gallery folder, Drive,
+  anywhere the file picker reaches). It's saved exactly as it arrived; a JPEG stays
+  a JPEG.
+- **send onward** — hand it straight to the Android share sheet.
+
+If a picture doesn't appear, the usual cause is the far side deciding your terminal
+can't show one. Charon answers `XTVERSION` and reports its cell size, so most tools
+work it out; inside `tmux` you may need `set -g allow-passthrough on`.
+
 ## 5. The strip that thinks — autocomplete
 
 Charon's suggestions come from the *host you're on*, not a canned dictionary:

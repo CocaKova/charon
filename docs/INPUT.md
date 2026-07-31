@@ -20,8 +20,38 @@ keyboard talks to the grid. State persists (prefs `charon` / `input_mode`).
 - **predictive (`abc`)** — the input view advertises a real multiline text field,
   so Gboard/Samsung light up glide-typing, suggestions and voice. Composing text
   is translated to terminal bytes as common-prefix diffs (backspaces to retract +
-  the new tail); the editable is cleared on each commit. This is what makes
-  swipe-typing a shell prompt possible — no other terminal does it this way.
+  the new tail). The editable mirrors the current line (reset on Enter) and
+  selection moves are reported (`updateSelection`), so the IME tracks the field
+  instead of guessing — an IME that can't see its own committed text re-commits
+  it, which is how first words used to double. When the IME re-opens a finished
+  word (`setComposingRegion`, the autocorrect/suggestion-tap path) the diff is
+  re-anchored onto that word; an edit the end-of-line wire cursor can't reach is
+  mirrored in the editable only and the connection restarted — never re-typed.
+  Text that lands outside the IME (autofill chips, snippets, paste, accessory
+  keys) restarts the connection so a stale composition can't commit on top of it.
+  This is what makes swipe-typing a shell prompt possible — no other terminal
+  does it this way.
+
+  **The editor half of the contract.** `BaseInputConnection` alone is not a real
+  editor, and the ways it falls short all show up as the *same* two symptoms: a
+  word that lands twice, or a suggestion tap that does nothing at all. All four
+  gaps are now filled, and the reasoning is worth keeping because each one is
+  silent — the IME simply stops offering, and nothing is logged anywhere:
+
+  | Gap | What the IME concludes | Fix |
+  |---|---|---|
+  | `updateSelection` never called | "I don't know where the cursor is" | reported on every edit, deferred to batch-edit end |
+  | `beginBatchEdit()` returns `false` | "composite edits are refused here" | accepted, depth-counted |
+  | `getExtractedText()` returns `null` | "this field has no text to replace" | the mirror, handed over whole |
+  | `initialSelStart/End` left at `-1` | "cursor position unknown" — before a single keystroke | seeded to 0 on a fresh connection |
+  | `commitCorrection()` returns `false` | "this field can't be corrected" | accepted (the text already arrived via `commitText`) |
+
+  The mapping itself — what is on the wire versus what the IME thinks is in the
+  field — lives in `PredictiveWire`, which has no Android in it and is unit-tested
+  against real Gboard call sequences (`PredictiveWireTest`). The connection is a
+  thin adapter over it. **If you touch this, add the sequence to that test first:**
+  this bug has been fixed twice, and both times the hole was a call order nobody
+  had written down.
 - **raw** — `inputType = TYPE_NULL`: real key events, the classic terminal path.
   Use it in full-screen TUIs where a composing echo would fire hotkeys. Gold when
   active — you've stepped off the charted water.

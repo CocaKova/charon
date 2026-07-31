@@ -25,6 +25,13 @@ interface ParserSink {
     /** A completed OSC string, terminated by BEL or ST. Payload excludes the terminator. */
     fun oscDispatch(payload: String)
 
+    /**
+     * A completed APC string (`ESC _ … ST`), payload excluding the terminator. This is
+     * where the Kitty graphics protocol lives. SOS and PM keep being discarded — they
+     * carry nothing anyone still sends.
+     */
+    fun apcDispatch(payload: String) {}
+
     /** DCS start: same shape as CSI; data follows via [dcsPut] until [dcsUnhook]. */
     fun dcsHook(params: CsiParams, collected: String, final: Char)
     fun dcsPut(codePoint: Int)
@@ -54,18 +61,31 @@ class Parser(private val sink: ParserSink) {
         DCS_INTERMEDIATE,
         DCS_PASSTHROUGH,
         DCS_IGNORE,
-        SOS_PM_APC_STRING,
+        SOS_PM_STRING,
+        APC_STRING,
     }
 
     private var state = State.GROUND
     private val params = CsiParams()
     private val collected = StringBuilder()
     private val oscPayload = StringBuilder()
+    private val apcPayload = StringBuilder()
     private var inDcsPassthrough = false
 
     companion object {
-        /** Cap on OSC payload length; beyond this the rest of the string is dropped. */
-        const val MAX_OSC_LENGTH = 65536
+        /**
+         * Cap on OSC payload length; beyond this the rest of the string is dropped.
+         * Generous because iTerm2 inline images (OSC 1337) arrive as one unchunked
+         * base64 blob — a photo does not fit in 64 KB.
+         */
+        const val MAX_OSC_LENGTH = 4 * 1024 * 1024
+
+        /**
+         * Cap on APC payload length. Kitty chunks graphics at 4096 base64 bytes per
+         * escape, so this is generous for a single well-formed transmission while
+         * still bounding a hostile stream.
+         */
+        const val MAX_APC_LENGTH = 65536
         private const val MAX_COLLECTED = 8
     }
 
@@ -81,7 +101,7 @@ class Parser(private val sink: ParserSink) {
             0x1B -> {
                 // ESC inside an OSC string may be the start of ST (ESC \); the OSC
                 // dispatch happens when the ST completes, via escDispatch below.
-                if (state == State.OSC_STRING) {
+                if (state == State.OSC_STRING || state == State.APC_STRING) {
                     state = State.ESCAPE
                     collected.setLength(0)
                     return
@@ -94,6 +114,7 @@ class Parser(private val sink: ParserSink) {
             0x9C -> { // ST (8-bit)
                 when (state) {
                     State.OSC_STRING -> dispatchOsc()
+                    State.APC_STRING -> dispatchApc()
                     State.DCS_PASSTHROUGH -> abortDcsIfActive()
                     else -> {}
                 }
@@ -103,7 +124,8 @@ class Parser(private val sink: ParserSink) {
             0x90 -> { abortDcsIfActive(); clear(); state = State.DCS_ENTRY; return }
             0x9B -> { abortDcsIfActive(); clear(); state = State.CSI_ENTRY; return }
             0x9D -> { abortDcsIfActive(); beginOsc(); return }
-            0x98, 0x9E, 0x9F -> { abortDcsIfActive(); state = State.SOS_PM_APC_STRING; return }
+            0x9F -> { abortDcsIfActive(); beginApc(); return }
+            0x98, 0x9E -> { abortDcsIfActive(); state = State.SOS_PM_STRING; return }
             in 0x80..0x9F -> { // remaining C1 controls execute from anywhere
                 abortDcsIfActive()
                 sink.execute(codePoint)
@@ -123,10 +145,14 @@ class Parser(private val sink: ParserSink) {
                 in 0x00..0x1F -> sink.execute(codePoint)
                 in 0x20..0x2F -> { collect(codePoint); state = State.ESCAPE_INTERMEDIATE }
                 0x50 -> { clear(); state = State.DCS_ENTRY }
-                0x58, 0x5E, 0x5F -> state = State.SOS_PM_APC_STRING
+                0x58, 0x5E -> state = State.SOS_PM_STRING
+                0x5F -> beginApc()
                 0x5B -> { clear(); state = State.CSI_ENTRY }
-                0x5C -> { // ST via ESC \ — terminates an OSC begun before this ESC
-                    if (oscActive) dispatchOsc()
+                0x5C -> { // ST via ESC \ — terminates an OSC/APC begun before this ESC
+                    when {
+                        oscActive -> dispatchOsc()
+                        apcActive -> dispatchApc()
+                    }
                     toGround()
                 }
                 0x5D -> beginOsc()
@@ -223,7 +249,12 @@ class Parser(private val sink: ParserSink) {
                 else -> sink.dcsPut(codePoint)
             }
 
-            State.DCS_IGNORE, State.SOS_PM_APC_STRING -> {
+            State.APC_STRING -> when (codePoint) {
+                in 0x00..0x1F -> {} // C0 inside an APC string is not payload
+                else -> if (apcPayload.length < MAX_APC_LENGTH) apcPayload.appendCodePoint(codePoint)
+            }
+
+            State.DCS_IGNORE, State.SOS_PM_STRING -> {
                 // Swallow everything until ST/CAN/SUB/ESC (handled by "anywhere" above).
             }
         }
@@ -260,6 +291,27 @@ class Parser(private val sink: ParserSink) {
         oscActive = false
     }
 
+    // An APC string is open. Same lifecycle as OSC: a sequence that interrupts it
+    // aborts it rather than leaking a half-read graphics command.
+    private var apcActive = false
+
+    private fun beginApc() {
+        apcPayload.setLength(0)
+        apcActive = true
+        state = State.APC_STRING
+    }
+
+    private fun dispatchApc() {
+        sink.apcDispatch(apcPayload.toString())
+        apcPayload.setLength(0)
+        apcActive = false
+    }
+
+    private fun abortApc() {
+        apcPayload.setLength(0)
+        apcActive = false
+    }
+
     private fun dispatchCsi(final: Int) {
         sink.csiDispatch(params, collected.toString(), final.toChar())
     }
@@ -289,6 +341,7 @@ class Parser(private val sink: ParserSink) {
     private fun toGround() {
         abortDcsIfActive()
         if (oscActive) abortOsc()
+        if (apcActive) abortApc()
         state = State.GROUND
     }
 }
