@@ -1,13 +1,16 @@
 package com.cocakova.charon.presentation.terminal
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Rect
+import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.Selection
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
@@ -45,6 +48,9 @@ class TerminalInputView(context: Context) : View(context) {
     /** Sink for encoded terminal input. */
     var onInput: ((String) -> Unit)? = null
 
+    /** Sink for paste-shaped text (bracketed-paste aware); [onInput] when unset. */
+    var onPaste: ((String) -> Unit)? = null
+
     /** DECCKM state provider, wired to the live emulator. */
     var appCursorKeys: () -> Boolean = { false }
 
@@ -77,6 +83,37 @@ class TerminalInputView(context: Context) : View(context) {
     }
 
     override fun onCheckIsTextEditor(): Boolean = true
+
+    /**
+     * The accessibility face of the editor contract: dictation apps and assistive
+     * services deliver text by finding the focused *editable* node and asking it to
+     * paste. A custom View reports editable=false, which made the terminal invisible
+     * to all of them — the IME saw an editor, accessibility saw a wall.
+     */
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.className = "android.widget.EditText"
+        info.isEditable = true
+        info.isMultiLine = true
+        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_PASTE)
+        // ACTION_SET_TEXT stays undeclared on purpose: "replace the field's text"
+        // has no honest meaning on a wire — a service that can't paste should fall
+        // back to the clipboard, not overwrite the line.
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        if (action == AccessibilityNodeInfo.ACTION_PASTE) {
+            val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                .primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+                ?.coerceToText(context)?.toString()
+            if (clip.isNullOrEmpty()) return false
+            logInput { "a11y paste len=${clip.length}" }
+            textLandedOutsideIme()
+            onPaste?.invoke(clip) ?: sendToTerminal(clip)
+            return true
+        }
+        return super.performAccessibilityAction(action, arguments)
+    }
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
