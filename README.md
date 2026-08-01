@@ -68,7 +68,7 @@ release builds fall back to the debug keystore for sideloading.
 
 ## Authorship
 
-Charon is written and maintained solely by Jonathan Kovacs ([@CocaKova](https://github.com/CocaKova)).
+Charon is written and maintained solely by [CocaKova](https://github.com/CocaKova).
 
 ## License
 
