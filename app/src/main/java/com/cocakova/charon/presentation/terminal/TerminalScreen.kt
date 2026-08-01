@@ -336,6 +336,7 @@ fun TerminalScreen(
                 factory = { ctx ->
                     TerminalInputView(ctx).apply {
                         onInput = { emit(it, it.length == 1) }
+                        onPaste = { session.scrollToBottom(); session.paste(it) }
                         appCursorKeys = { session.term.cursorKeysApp }
                         mode = inputMode
                     }.also { inputView = it }
@@ -345,6 +346,7 @@ fun TerminalScreen(
                 // keystrokes keep flowing to the session you just left.
                 update = { view ->
                     view.onInput = { emit(it, it.length == 1) }
+                    view.onPaste = { session.scrollToBottom(); session.paste(it) }
                     view.appCursorKeys = { session.term.cursorKeysApp }
                     view.secure = toll != null
                 },
