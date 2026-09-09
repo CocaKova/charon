@@ -19,6 +19,11 @@ val localProps = Properties().apply {
 }
 val releaseKeystorePath: String? = localProps.getProperty("charon.keystore")
 
+// Premium overlay: when a sibling checkout named charon-obol sits beside this
+// repo, an "obol" flavor appears with its sources. The public repo is complete
+// without it — foss is the whole free app and the only flavor most builders see.
+val obolDir = rootProject.file("../charon-obol")
+
 android {
     namespace = "com.cocakova.charon"
     compileSdk = 36
@@ -26,8 +31,42 @@ android {
         applicationId = "com.cocakova.charon"
         minSdk = 24
         targetSdk = 36
-        versionCode = 21
-        versionName = "1.1.1"
+        versionCode = 22
+        versionName = "1.1.2"
+    }
+
+    // ---- Tiers ------------------------------------------------------------
+    // foss = the whole free Charon; everything functional lives here, always.
+    // obol = the ferryman's thanks for a coin: cosmetics only, built from the
+    // private sibling checkout and handed over by ADB — never through the
+    // public repo or its releases. Same applicationId and signing key, so a
+    // foss install and an obol install update over each other in place.
+    flavorDimensions += "tier"
+    productFlavors {
+        create("foss") {
+            dimension = "tier"
+            isDefault = true
+        }
+        if (obolDir.exists()) {
+            create("obol") {
+                dimension = "tier"
+                versionNameSuffix = "+obol"
+            }
+        }
+    }
+    sourceSets {
+        // Built-in Kotlin (no kotlin-android plugin here) compiles only what the
+        // kotlin source dirs list — java.srcDir alone would leave .kt files unseen.
+        if (obolDir.exists()) {
+            getByName("obol") {
+                java.srcDir(obolDir.resolve("src/main/java"))
+                kotlin.srcDir(obolDir.resolve("src/main/java"))
+            }
+            getByName("testObol") {
+                java.srcDir(obolDir.resolve("src/test/java"))
+                kotlin.srcDir(obolDir.resolve("src/test/java"))
+            }
+        }
     }
 
     signingConfigs {

@@ -164,9 +164,17 @@ forget everything. Pasted lines are never learned.
 
 From the session switcher, **⇅** opens the hold:
 
-- Browse the remote tree (▸ dirs, ⇝ links); tap a file to **carry it ashore**
-  (download via the system file picker), rename it, or release it into the river
-  (delete). **⇡** carries a local file aboard; **+** makes a directory.
+- Browse the remote tree (▸ dirs, ⇝ links); long-press a file for its cargo sheet —
+  **carry it ashore** (download via the system file picker), rename it, or release
+  it into the river (delete). **⇡** carries a local file aboard; **+** makes a
+  directory.
+- **Reading a scroll**: tap a text file — `.md`, `.txt`, `.log`, `.conf`, config,
+  source, a dotfile — and it opens *in place*, no download and no second app.
+  Markdown is rendered (headings, lists, quotes, tables, code blocks, inline
+  marks); **raw** shows it as written. Text is selectable, **⇣** carries it ashore
+  after all, and back returns to the deck. Only the first 512K comes aboard; past
+  that the reader says so. Anything else stays cargo: the sheet's **☰ read aboard**
+  will try any file, and a binary says it's cargo rather than filling the screen.
 - Transfers are resumable — a dropped link retries from the landed byte, four
   times, before giving up. The ledger strip shows progress; finished pulls offer
   *tap to open*.

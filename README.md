@@ -35,8 +35,10 @@ alternate app icons, and a supporter mark. Nothing functional is ever behind it.
   with a prose gate and a secret gate so it never learns your sentences or your tokens
 - Multi-session with auto-reconnect, instant network-return redial, and per-host startup
   commands (`tmux new -As main`); adaptive keepalive so idle sessions sip battery
-- SFTP browser with resumable transfers; local, remote, and dynamic (SOCKS5) port
-  forwards; snippets; fleet view with reachability soundings, Tailscale import, LAN sweep
+- SFTP browser with resumable transfers, and text files read *in place* — tap a README,
+  config, or log and it opens on the phone (markdown rendered) without downloading it
+- Local, remote, and dynamic (SOCKS5) port forwards; snippets; fleet view with
+  reachability soundings, Tailscale import, LAN sweep
 - The toll: password prompts are detected and keystrokes routed around the suggestion
   strip, the IME's learning, and command history
 - The reliquary: the whole vault (hosts, keys, known hosts, snippets, forwards) exports to
