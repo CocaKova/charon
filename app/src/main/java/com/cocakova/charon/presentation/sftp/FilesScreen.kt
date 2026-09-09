@@ -79,11 +79,12 @@ import kotlin.concurrent.thread
 
 /**
  * The hold — the ferry's cargo deck. A single-pane SFTP browser over the active
- * session's transport: tap a directory to enter, tap a file for its cargo sheet
- * (carry ashore / rename / release), **⇡ aboard** brings a local document up via
- * SAF. Transfers ride their own channels and report in the ledger strip at the
- * bottom, resuming themselves through hiccups. Termius charges for this deck;
- * Charon's is part of the fare.
+ * session's transport: tap a directory to enter, tap a text file to read it where
+ * it lies ([ScrollReader]), long-press anything for its cargo sheet (read / carry
+ * ashore / rename / release), **⇡ aboard** brings a local document up via SAF.
+ * Transfers ride their own channels and report in the ledger strip at the bottom,
+ * resuming themselves through hiccups. Termius charges for this deck; Charon's is
+ * part of the fare.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,10 +109,15 @@ fun FilesScreen(
     var deleteTarget by remember { mutableStateOf<RemoteEntry?>(null) }
     var showMkdir by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
+    // The scroll being read in place, and what's come aboard of it so far.
+    var reading by remember { mutableStateOf<RemoteEntry?>(null) }
+    var scroll by remember { mutableStateOf<ScrollContent>(ScrollContent.Loading) }
+    var readTick by remember { mutableStateOf(0) }
     val ledger by transfers.transfers.collectAsState()
 
-    // System back steps off the deck, back to the terminal — not out of the app.
-    BackHandler(onBack = onBack)
+    // System back closes the scroll first, then steps off the deck, back to the
+    // terminal — never out of the app.
+    BackHandler { if (reading != null) reading = null else onBack() }
 
     // The browser's own channel: opened once, closed on leave (off-main — close is
     // channel I/O too). Transfers never share it.
@@ -149,6 +155,26 @@ fun FilesScreen(
         loading = false
     }
 
+    // Reading a scroll rides its own channel, like a transfer does: a slow draw
+    // over a tired link never blocks the listing behind it.
+    LaunchedEffect(reading, readTick) {
+        val entry = reading ?: return@LaunchedEffect
+        scroll = ScrollContent.Loading
+        withContext(Dispatchers.IO) {
+            val ch = openSftp()
+            if (ch == null) {
+                scroll = ScrollContent.Refused("the hold is unreachable")
+                return@withContext
+            }
+            scroll = try {
+                runCatching { ch.openRead(entry.path).use { readScroll(it) } }
+                    .getOrElse { ScrollContent.Refused(it.message ?: "cannot read this file") }
+            } finally {
+                runCatching { ch.close() }
+            }
+        }
+    }
+
     // SAF: carrying ashore (CREATE_DOCUMENT picks the landing spot) …
     var pendingPull by remember { mutableStateOf<RemoteEntry?>(null) }
     val pullLauncher = rememberLauncherForActivityResult(
@@ -184,117 +210,145 @@ fun FilesScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.safeDrawing),
-    ) {
-        HoldTopBar(
-            sessionLabel = sessionLabel,
-            dir = dir ?: "…",
-            onBack = onBack,
-            onRefresh = { refreshTick++ },
-            onMkdir = { showMkdir = true },
-            onUpload = { pushLauncher.launch(arrayOf("*/*")) },
-        )
-        HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
-        // A quiet pulse under the bar while a listing is in flight over the old deck.
-        if (loading && listing != null) {
-            LinearProgressIndicator(
-                color = Styx.water,
-                trackColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth().height(2.dp),
+    // The reader lies over the deck, which stays composed underneath it —
+    // stepping out of a scroll returns to the same listing, same channel.
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+        ) {
+            HoldTopBar(
+                sessionLabel = sessionLabel,
+                dir = dir ?: "…",
+                onBack = onBack,
+                onRefresh = { refreshTick++ },
+                onMkdir = { showMkdir = true },
+                onUpload = { pushLauncher.launch(arrayOf("*/*")) },
             )
-        }
+            HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+            // A quiet pulse under the bar while a listing is in flight over the old deck.
+            if (loading && listing != null) {
+                LinearProgressIndicator(
+                    color = Styx.water,
+                    trackColor = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                )
+            }
 
-        Box(Modifier.weight(1f)) {
-            when {
-                loading && listing == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Styx.water)
-                }
-                error != null -> Column(
-                    Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(error!!, style = MaterialTheme.typography.bodyMedium, color = Styx.ember)
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = { refreshTick++ }) { Text("try again") }
-                }
-                else -> AnimatedContent(
-                    targetState = listing,
-                    transitionSpec = {
-                        val from = initialState?.first ?: ""
-                        val to = targetState?.first ?: ""
-                        if (from == to) {
-                            // Same deck refreshed (rename/delete/mkdir): just settle.
-                            fadeIn(tween(150)) togetherWith fadeOut(tween(150))
-                        } else {
-                            // Slide in the direction of travel: deeper comes from the
-                            // right, climbing out comes from the left.
-                            val way = if (to.count { it == '/' } > from.count { it == '/' }) 1 else -1
-                            (slideInHorizontally(tween(220)) { it / 3 * way } + fadeIn(tween(220))) togetherWith
-                                (slideOutHorizontally(tween(220)) { -it / 3 * way } + fadeOut(tween(180)))
-                        }
-                    },
-                    label = "deck",
-                ) { deck ->
-                    if (deck == null) {
-                        Box(Modifier.fillMaxSize())
-                    } else LazyColumn(Modifier.fillMaxSize()) {
-                        val d = deck.first
-                        if (d != "/" && d.isNotEmpty()) {
-                            item(key = "..") {
-                                UpRow { dir = d.trimEnd('/').substringBeforeLast('/').ifEmpty { "/" } }
+            Box(Modifier.weight(1f)) {
+                when {
+                    loading && listing == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Styx.water)
+                    }
+                    error != null -> Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(error!!, style = MaterialTheme.typography.bodyMedium, color = Styx.ember)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { refreshTick++ }) { Text("try again") }
+                    }
+                    else -> AnimatedContent(
+                        targetState = listing,
+                        transitionSpec = {
+                            val from = initialState?.first ?: ""
+                            val to = targetState?.first ?: ""
+                            if (from == to) {
+                                // Same deck refreshed (rename/delete/mkdir): just settle.
+                                fadeIn(tween(150)) togetherWith fadeOut(tween(150))
+                            } else {
+                                // Slide in the direction of travel: deeper comes from the
+                                // right, climbing out comes from the left.
+                                val way = if (to.count { it == '/' } > from.count { it == '/' }) 1 else -1
+                                (slideInHorizontally(tween(220)) { it / 3 * way } + fadeIn(tween(220))) togetherWith
+                                    (slideOutHorizontally(tween(220)) { -it / 3 * way } + fadeOut(tween(180)))
+                            }
+                        },
+                        label = "deck",
+                    ) { deck ->
+                        if (deck == null) {
+                            Box(Modifier.fillMaxSize())
+                        } else LazyColumn(Modifier.fillMaxSize()) {
+                            val d = deck.first
+                            if (d != "/" && d.isNotEmpty()) {
+                                item(key = "..") {
+                                    UpRow { dir = d.trimEnd('/').substringBeforeLast('/').ifEmpty { "/" } }
+                                }
+                            }
+                            items(deck.second, key = { it.path }) { entry ->
+                                EntryRow(
+                                    entry = entry,
+                                    onOpen = {
+                                        // A tap opens whatever can be opened here: a
+                                        // deck below, or a scroll read in place. Cargo
+                                        // still goes through the sheet to go anywhere.
+                                        when {
+                                            entry.isDir -> dir = entry.path
+                                            readsAsText(entry) -> reading = entry
+                                            else -> selected = entry
+                                        }
+                                    },
+                                    onLongPress = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        selected = entry
+                                    },
+                                    modifier = Modifier.animateItem(),
+                                )
                             }
                         }
-                        items(deck.second, key = { it.path }) { entry ->
-                            EntryRow(
-                                entry = entry,
-                                onOpen = {
-                                    if (entry.isDir) dir = entry.path else selected = entry
-                                },
-                                onLongPress = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    selected = entry
-                                },
-                                modifier = Modifier.animateItem(),
-                            )
+                    }
+                }
+            }
+
+            // The cargo ledger: every crossing in flight.
+            if (ledger.isNotEmpty()) {
+                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .animateContentSize()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    ledger.forEach { t ->
+                        TransferRow(t) { landed ->
+                            // A landed pull opens where it landed — extension mime first,
+                            // since CREATE_DOCUMENT stamped it octet-stream.
+                            val ext = landed.name.substringAfterLast('.', "").lowercase(Locale.US)
+                            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                                ?: "*/*"
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW)
+                                        .setDataAndType(landed.landedAt, mime)
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                )
+                            }.onFailure {
+                                Toast.makeText(context, "no app aboard can open this", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
             }
         }
 
-        // The cargo ledger: every crossing in flight.
-        if (ledger.isNotEmpty()) {
-            HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .animateContentSize()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            ) {
-                ledger.forEach { t ->
-                    TransferRow(t) { landed ->
-                        // A landed pull opens where it landed — extension mime first,
-                        // since CREATE_DOCUMENT stamped it octet-stream.
-                        val ext = landed.name.substringAfterLast('.', "").lowercase(Locale.US)
-                        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
-                            ?: "*/*"
-                        runCatching {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW)
-                                    .setDataAndType(landed.landedAt, mime)
-                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                            )
-                        }.onFailure {
-                            Toast.makeText(context, "no app aboard can open this", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
+        // The scroll, read where it lies — over the deck, never instead of it.
+        reading?.let { entry ->
+            ScrollReader(
+                entry = entry,
+                content = scroll,
+                onBack = { reading = null },
+                onRetry = { readTick++ },
+                onPull = {
+                    // Step back to the deck as the crossing starts: the ledger is
+                    // down there, and a scroll over it would hide its own progress.
+                    reading = null
+                    pendingPull = entry
+                    pullLauncher.launch(entry.name)
+                },
+            )
         }
     }
 
@@ -304,6 +358,7 @@ fun FilesScreen(
         ModalBottomSheet(onDismissRequest = { selected = null }) {
             CargoSheet(
                 entry = entry,
+                onRead = { selected = null; reading = entry },
                 onPull = {
                     selected = null
                     if (!entry.isDir) {
@@ -424,7 +479,7 @@ private fun HoldTopBar(
 }
 
 @Composable
-private fun BarAction(label: String, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = Styx.mist) {
+internal fun BarAction(label: String, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = Styx.mist) {
     Text(
         label,
         style = MaterialTheme.typography.labelMedium,
@@ -502,6 +557,7 @@ private fun EntryRow(
 @Composable
 private fun CargoSheet(
     entry: RemoteEntry,
+    onRead: () -> Unit,
     onPull: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -521,6 +577,9 @@ private fun CargoSheet(
             modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
         )
         if (!entry.isDir) {
+            // Offered for anything, not just the known text names: an extensionless
+            // script is worth a look, and a binary just says so and stays put.
+            SheetAction("☰  read aboard", Styx.bone, onRead)
             SheetAction("⇣  carry ashore", Styx.water, onPull)
         }
         SheetAction("✎  rename", Styx.bone, onRename)
@@ -661,7 +720,7 @@ private fun NameDialog(
 
 private val DATE_FMT = SimpleDateFormat("MMM d HH:mm", Locale.US)
 
-private fun humanBytes(bytes: Long): String = when {
+internal fun humanBytes(bytes: Long): String = when {
     bytes < 0 -> "?"
     bytes < 1024 -> "${bytes}B"
     bytes < 1024 * 1024 -> "%.1fK".format(bytes / 1024.0)

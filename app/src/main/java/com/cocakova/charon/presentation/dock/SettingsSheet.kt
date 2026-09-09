@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cocakova.charon.premium.Obol
 import com.cocakova.charon.presentation.components.ChoicePill
 import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.TerminalScheme
@@ -236,6 +237,11 @@ fun SettingsSheet(
             var scheme by remember {
                 mutableStateOf(prefs.getString("scheme", null) ?: TerminalSchemes.STYX.name)
             }
+            // Hand-crafted liveries hang beside the curated ones. The revision
+            // counter is bumped by the shipwright (an obol berth; silent in foss)
+            // whenever the roster changes, so fresh work appears without reopening.
+            var liveryRev by remember { mutableStateOf(0) }
+            val customLiveries = remember(liveryRev) { Obol.customLiveries(prefs) }
             Text(
                 "livery",
                 style = MaterialTheme.typography.bodyLarge,
@@ -250,7 +256,7 @@ fun SettingsSheet(
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             ) {
-                TerminalSchemes.all.forEach { livery ->
+                (TerminalSchemes.all + customLiveries).forEach { livery ->
                     LiverySwatch(
                         scheme = livery,
                         selected = scheme == livery.name,
@@ -262,6 +268,15 @@ fun SettingsSheet(
                     Spacer(Modifier.width(10.dp))
                 }
             }
+            Obol.LiveryForge(
+                prefs = prefs,
+                selected = scheme,
+                onSelect = { name ->
+                    scheme = name
+                    prefs.edit().putString("scheme", name).apply()
+                },
+                onChanged = { liveryRev++ },
+            )
 
             Spacer(Modifier.height(18.dp))
 

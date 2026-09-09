@@ -13,6 +13,7 @@ import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.service.AppVisibility
 import com.cocakova.charon.service.ConnectionService
 import com.cocakova.charon.service.Horn
+import com.cocakova.charon.premium.Obol
 import com.cocakova.charon.theme.TerminalSchemes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,10 +150,13 @@ class SessionManager(
     fun connect(config: ConnectConfig, hostId: String? = null) {
         // The livery chosen at the helm; each crossing wears what was set when it
         // cast off — a change takes hold from the next crossing, like the helm says.
-        val scheme = TerminalSchemes.byName(
-            appContext.getSharedPreferences("charon", Context.MODE_PRIVATE)
-                .getString("scheme", null),
-        )
+        // Hand-crafted liveries (an obol privilege) are searched after the curated
+        // ones; a name that resolves to neither sails under Styx colours.
+        val prefs = appContext.getSharedPreferences("charon", Context.MODE_PRIVATE)
+        val wanted = prefs.getString("scheme", null)
+        val scheme = TerminalSchemes.all.firstOrNull { it.name == wanted }
+            ?: Obol.customLiveries(prefs).firstOrNull { it.name == wanted }
+            ?: TerminalSchemes.STYX
         val session = TerminalSession(
             label = displayLabel(config),
             basePalette = scheme.ansi16,
