@@ -120,6 +120,9 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
 - **Dredging the wake — search in scrollback.** Regex, live highlight, jump between hits. On a
   phone this is huge — you can't just eyeball 10k lines. A themed search bar (teal matches,
   gold current hit).
+  > **Status: SHIPPED in v1.1.2** — `SearchEngine.find` (case-folded substring, non-overlapping,
+  > rows in selection space), `DredgeBar` over the water with ▲/▼/✕ pills, gold wash on the
+  > current hit, teal on the rest, tap-a-pill jumps the glass to each sighting.
 - **The catch — hint / quick-select mode.** Kitty's `hints` and tmux-fingers: overlay labels
   on every URL / path / IP / git-hash / port on screen, grab one with a keystroke. **Mobile
   surpass:** skip the labels — you just *tap* the thing. One-tap "open URL / copy path / SSH to
