@@ -77,6 +77,11 @@ xterm-conformance-tested (see `TERMINAL.md`).
   keep selecting; **copy** and **all** pills appear with a selection.
 - Scrolled up, a gold **▼ live** pill takes you back to the bottom; any keystroke
   also snaps to live.
+- **Dredging the wake** — the search bar over the water. Type and every sighting
+  washes teal right in the grid, the one under your eye golds; ▲/▼ walk the
+  sightings (the glass jumps to each), ✕ releases the dredge and returns to live.
+  Case folds itself; matches run oldest-first from the deep scrollback up onto the
+  live grid.
 - Every grid re-snap flashes a **cols×rows** pill — ember-tinted when you're under
   80×24, which full-screen tools like btop insist on (zoom out, or go landscape).
 

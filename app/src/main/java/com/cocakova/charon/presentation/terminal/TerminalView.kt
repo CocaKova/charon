@@ -42,6 +42,7 @@ import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.Apparition
 import com.cocakova.charon.terminal.CellAttrs
 import com.cocakova.charon.terminal.Line
+import com.cocakova.charon.terminal.SearchEngine
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
 
@@ -63,6 +64,8 @@ fun TerminalView(
     apparitions: ApparitionCache? = null,
     /** A shade was touched: the lightbox opens on it. */
     onApparitionTap: (Apparition) -> Unit = {},
+    /** Dredge results to wash over the grid: every hit, plus the one the eye is on. */
+    search: SearchEngine.SearchState? = null,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -289,7 +292,7 @@ fun TerminalView(
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
                     size.width, size.height, cursorOn, selection, scrollOffset,
-                    session.cursorColor, apparitions,
+                    session.cursorColor, apparitions, search,
                 )
             }
         }
@@ -311,6 +314,9 @@ private fun nearSelection(sel: TerminalSession.Selection, cell: TextSelection.Ce
 
 /** The water's glow: the cursor is Styx.water, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
+/** The dredge washes: teal for every sighting, gold for the one the eye is on. */
+private const val SEARCH_TEAL = 0x3ECFB2
+private const val SEARCH_GOLD = 0xD9A441
 private const val CURSOR_BLINK_NANOS = 530_000_000L
 
 /** How long after the last remote burst the render loop keeps riding the frame
@@ -366,6 +372,7 @@ private fun drawTerminal(
     scrollOffset: Int,
     cursorColor: Int = CURSOR_TEAL,
     apparitions: ApparitionCache? = null,
+    search: SearchEngine.SearchState? = null,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -396,6 +403,11 @@ private fun drawTerminal(
     // Selection tint under the glyphs: a translucent wash of the river's teal.
     if (selection != null) {
         drawSelection(canvas, p, term, selection, cw, ch, scrollOffset)
+    }
+    // Dredge hits wash under the glyphs too: teal for every sighting, gold for
+    // the one the eye is on. Drawn after the selection so the gold stays visible.
+    if (search != null && search.hits.isNotEmpty()) {
+        drawSearchHits(canvas, p, term, search, cw, ch, scrollOffset)
     }
 
     for (row in 0 until term.rows) {
@@ -515,6 +527,36 @@ private fun drawSelection(
         val left = from * cw
         val right = (to + 1) * cw
         val top = viewRow * ch
+        canvas.drawRect(left, top, right, top + ch, p.fill)
+    }
+    p.fill.alpha = 255
+}
+
+/**
+ * Wash the dredge hits over the grid: a translucent teal for every sighting, gold
+ * for the one the eye is on. Hits live in selection space (negative rows =
+ * scrollback), so each maps onto the viewport exactly like the selection does —
+ * off-glass rows simply don't draw.
+ */
+private fun drawSearchHits(
+    canvas: android.graphics.Canvas,
+    p: TerminalPaints,
+    term: TerminalEmulator,
+    search: SearchEngine.SearchState,
+    cw: Float,
+    ch: Float,
+    scrollOffset: Int,
+) {
+    val firstVisible = -scrollOffset
+    val lastVisible = term.rows - 1 - scrollOffset
+    p.fill.alpha = 84
+    for ((i, hit) in search.hits.withIndex()) {
+        if (hit.row < firstVisible || hit.row > lastVisible) continue
+        val viewRow = hit.row + scrollOffset
+        val left = hit.start * cw
+        val right = (hit.end + 1) * cw
+        val top = viewRow * ch
+        p.fill.color = if (i == search.current) SEARCH_GOLD else SEARCH_TEAL
         canvas.drawRect(left, top, right, top + ch, p.fill)
     }
     p.fill.alpha = 255

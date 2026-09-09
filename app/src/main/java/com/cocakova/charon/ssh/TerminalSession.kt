@@ -153,6 +153,13 @@ class TerminalSession(
         if (scrollOffset.value != 0) scrollOffset.value = 0
     }
 
+    /** Put a selection-space row (negative = scrollback) at the top of the glass. */
+    fun jumpToRow(row: Int) {
+        val sb = synchronized(lock) { term.screen.scrollbackSize }
+        val offset = (sb - (sb + row)).coerceIn(0, sb)
+        if (scrollOffset.value != offset) scrollOffset.value = offset
+    }
+
     fun sendText(text: String) {
         onOutput?.invoke(text.toByteArray(Charsets.UTF_8))
     }

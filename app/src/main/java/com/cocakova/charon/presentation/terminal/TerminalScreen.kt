@@ -43,6 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -90,6 +91,7 @@ import com.cocakova.charon.data.repository.CommandHistory
 import com.cocakova.charon.presentation.forwards.ForwardsSheet
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.Apparition
+import com.cocakova.charon.terminal.SearchEngine
 import com.cocakova.charon.terminal.input.KeyEncoder
 import com.cocakova.charon.theme.CharonMono
 import com.cocakova.charon.theme.Styx
@@ -137,6 +139,23 @@ fun TerminalScreen(
     // the lightbox share one cache so opening an image costs no second decode.
     val apparitionCache = remember(session.id) { ApparitionCache() }
     var lightbox by remember(session.id) { mutableStateOf<Apparition?>(null) }
+    // Dredge the wake: search over scrollback + live grid. One query, one current
+    // hit; nav walks the sightings and pins the glass on each. Recomputed off the
+    // query and the cursor — cheap for a 10k-line scrollback, and output between
+    // keystrokes only shifts rows by the evicted count, which the wash tolerates.
+    var dredge by remember(session.id) { mutableStateOf("") }
+    var dredgeAt by remember(session.id) { mutableStateOf(0) }
+    var dredgeFocused by remember(session.id) { mutableStateOf(false) }
+    val searchState by remember(session.id, dredge, dredgeAt) {
+        mutableStateOf(
+            if (dredge.isBlank()) null
+            else synchronized(session.lock) {
+                val hits = SearchEngine.find(session.term.screen, dredge)
+                if (hits.isEmpty()) null
+                else SearchEngine.SearchState(hits, dredgeAt.coerceIn(0, hits.size - 1))
+            },
+        )
+    }
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("charon", Context.MODE_PRIVATE) }
     // Pinch-zoomable font size, persisted; clamped to a legible band. The write is
@@ -367,6 +386,7 @@ fun TerminalScreen(
                 },
                 apparitions = apparitionCache,
                 onApparitionTap = { lightbox = it },
+                search = searchState,
             )
 
             // A shade held up to the light: full screen, pinch to look closer, gold
@@ -414,6 +434,26 @@ fun TerminalScreen(
                     Spacer(Modifier.height(8.dp))
                 }
                 tollShown?.let { TollPill(phase = it, pulse = tollPulse) }
+            }
+
+            // The dredge bar: search the wake. Sits under the switcher, over the
+            // water — a field plus the sighting count and step/close pills.
+            if (dredge.isNotEmpty() || dredgeFocused) {
+                DredgeBar(
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    query = dredge,
+                    hits = searchState?.hits?.size ?: if (dredge.isBlank()) 0 else 0,
+                    current = (searchState?.current ?: -1) + 1,
+                    onQuery = { dredge = it; dredgeAt = 0; dredgeFocused = true },
+                    onStep = { dir ->
+                        val total = searchState?.hits?.size ?: 0
+                        if (total == 0) return@DredgeBar
+                        val next = ((dredgeAt + dir) % total + total) % total
+                        dredgeAt = next
+                        searchState?.hits?.getOrNull(next)?.let { session.jumpToRow(it.row) }
+                    },
+                    onClose = { dredge = ""; dredgeAt = 0; dredgeFocused = false; session.scrollToBottom() },
+                )
             }
 
             // Anchored to the live edge: the lading strip while cargo is moving,
@@ -936,6 +976,70 @@ private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
             color = if (paid) Styx.coin else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * The dredge bar: search over the wake. A small field over the water with step
+ * pills (older/newer sighting) and a release. Sits under the switcher; the count
+ * line reads total sightings and which one the eye is on.
+ */
+@Composable
+private fun DredgeBar(
+    query: String,
+    hits: Int,
+    current: Int,
+    onQuery: (String) -> Unit,
+    onStep: (Int) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(top = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                singleLine = true,
+                placeholder = { Text("dredge the wake", color = Styx.mist) },
+                modifier = Modifier.weight(1f),
+            )
+            DredgePill("▲") { onStep(-1) }
+            DredgePill("▼") { onStep(1) }
+            DredgePill("✕") { onClose() }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            when {
+                query.isBlank() || hits == 0 -> "no sightings"
+                else -> "$hits · $current"
+            },
+            fontFamily = CharonMono,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (hits > 0) Styx.water else Styx.mist,
+        )
+    }
+}
+
+/** One pill of the dredge bar. */
+@Composable
+private fun DredgePill(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        fontFamily = CharonMono,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Styx.water)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+    )
 }
 
 /**
