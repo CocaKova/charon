@@ -285,7 +285,9 @@ the remote app has requested mouse tracking (DECSET 9/1000/1002/1003).
 | Gesture              | mouse **off**                    | mouse **on** (htop/vim/tmux)      |
 |----------------------|----------------------------------|-----------------------------------|
 | **tap**              | clear selection, else focus + IME| clear selection, else mouse click |
+| **tap** on a link    | open the link sheet              | mouse click *(the app owns clicks)* |
 | **long-press**       | select the word under the finger | *(same — local select always works so you can copy out of a mouse app)* |
+| **long-press** on a link | open the link sheet          | open the link sheet |
 | **drag** (clear water) | scroll our scrollback          | send wheel notches                |
 | **drag** (starting on the selection, ±1 row) | extend the selection | extend the selection |
 | **pinch**            | zoom the font (8–32 sp, persisted) | zoom the font                   |
@@ -294,6 +296,16 @@ A selection no longer hijacks every drag: grab the selection (or the row beside
 it) to grow it, grab anywhere else to scroll — the selection survives the scroll.
 Holding a select-drag at the glass's top or bottom edge crawls the viewport a row
 at a time, so one gesture can walk a selection deep into scrollback.
+
+**Links (OSC 8)** follow selection's rule for mouse apps: the tap is the app's
+(tmux uses it to pick a pane; an app that drew a link may answer clicks on it
+itself), but a long-press is always ours — so a link is reachable in every mode.
+The tap order is: clear a selection → a shade (lightbox) → a link (mouse off) →
+mouse click / focus. The sheet never opens anything on its own: it shows the link's
+words, the real host and the full URI, then **open** (http/https/mailto only, via
+`ACTION_VIEW` + `CATEGORY_BROWSABLE`), **copy**, or **select** (the word select the
+long-press would have done). While it's up the whole link glows — every cell
+sharing the id, across rows.
 
 One "notch" = one cell-height of travel. Fast flicks barely move (the OS eats
 them as a fling); a slower drag scrolls smoothly.

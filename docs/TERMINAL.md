@@ -21,6 +21,7 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
 - [x] CSI cursor: CUU CUD CUF CUB CNL CPL CHA CUP HVP VPA
 - [x] CSI edit: ED EL ECH ICH DCH IL DL SU SD
 - [x] SGR: 0-9, 21-29, 30-37/39, 40-47/49, 90-97, 100-107, 38;5 48;5, 38;2 48;2 (truecolor)
+      (next release: `4:n` styles, 58/59 underline color — below)
 - [x] DECSTBM scroll regions + origin mode (DECOM)
 - [x] Autowrap **with deferred-wrap (pending-wrap) semantics** — explicit tests
 - [x] Tab stops: HT HTS TBC (BitSet)
@@ -148,10 +149,58 @@ sent — Android's numpad Enter is Enter); F13–F35, media keys and Hyper/Meta 
 turns it into a character, and as Alt otherwise — the legacy path, unchanged, still
 treats it as Alt.
 
+## Next release — the deep colors & marked passages
+
+*How nvim draws its LSP squiggles, and real links instead of regex guesses.* See
+`docs/FRONTIER.md` Tier 2.
+
+- [x] **Underline styles** — `SGR 4:0` off, `4:1` single, `4:2` double, `4:3` curly,
+  `4:4` dotted, `4:5` dashed (colon sub-parameters; `CsiParams` already carried
+  them). Legacy `4` / `24` unchanged; `21` is now a true **double** underline
+  (ECMA-48/xterm). `4;3` stays underline + italic — only the colon form picks a
+  style. Unknown styles (`4:6+`) fold to single.
+- [x] **Underline color** — `SGR 58:5:n`, `58:2::r:g:b`, `58:2:r:g:b` (colorspace
+  optional, like 38/48) and the semicolon `58;5;n` / `58;2;r;g;b` forms; `59`
+  resets to "follow the foreground". `SGR 0` clears style and color. Saved and
+  restored with the cursor (DECSC/DECRC); DECSTR/RIS reset them.
+- [x] **OSC 8 hyperlinks** — `OSC 8 ; params ; URI ST` opens (BEL or ST
+  terminated), `OSC 8 ; ; ST` closes; the URI may contain `;`. Cells printed while
+  open carry the link; `SGR 0` does **not** close it (it isn't SGR state), DECSTR
+  and RIS do. `id=` is honoured: same `id` + same URI = one link (split links
+  highlight together); anonymous links are keyed by URI.
+- **Storage** — `CellAttrs` (the per-cell Long) is full, so these live in a second
+  Long per cell, `CellExt`: underline style (3 bits), underline color (mode +
+  24-bit payload), link id (16 bits). It sits in `Line.ext`, a side array that is
+  **allocated only when a cell on that line wears one** and dropped on
+  `Line.clear()` — plain text, and plain `SGR 4` (single = the free 0), cost
+  nothing. Edits (ICH/DCH/ECH/EL/resize) carry it like the attrs; erase clears it.
+- **Links table** — `HyperlinkTable`, one per emulator (both screens share it, so
+  links in scrollback keep their target). Cells hold the id, never a String.
+  Defensive caps: URI ≤ 4096 chars, `id=` ≤ 250, ≤ 4096 live links, ≤ 1 M chars
+  total; URIs with control characters are refused. A full table sweeps out ids no
+  held line references (a stream that keeps minting distinct links while the table
+  stays full gets its next 256 refused before another sweep — text still prints,
+  just unlinked).
+- **Rendering** (`TerminalView`) — every style hand-drawn, allocation-free:
+  straight styles as rects, the curl as alternating quadratic arcs (C1-smooth
+  wave, one period per cell, amplitude ≈ one stroke) on a reused `Path`. Geometry
+  derives from the text size so pinch-zoom scales it; patterns repeat per cell so
+  runs join seamlessly. Underline color = SGR 58 when set, else the (inverse-
+  resolved) fg; faint dims it with the glyph. A linked cell with no explicit
+  underline gets a quiet dotted one in the livery's accent (the scheme's cursor
+  color — StyxTeal under Styx).
+- **Touch** — see `docs/INPUT.md` §3: a tap on a link (mouse reporting off) or a
+  long-press (always) opens a confirm sheet; only `http`/`https`/`mailto` open via
+  `ACTION_VIEW`, the rest are copy-only.
+
+Not aboard yet: **hover** (no pointer on a phone — the sheet's highlight stands in),
+underline color through **DECRQSS** (not implemented at all), and `OSC 8` link
+**hints** over plain-text URLs (Tier 3's catch).
+
 ## Explicit non-goals (until someone asks)
 
-Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), OSC 8
-(v1.x), perfect grapheme clustering (we match remote `wcwidth()` — that's what programs
+Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), perfect
+grapheme clustering (we match remote `wcwidth()` — that's what programs
 lay out against).
 
 ## Test strategy

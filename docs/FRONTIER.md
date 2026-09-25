@@ -106,8 +106,19 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
 - **The deep colors — undercurl & colored underlines** (`SGR 4:3` curly / `4:4` dotted /
   `4:5` dashed, `SGR 58/59` underline color). This is how nvim draws LSP squiggles. Pure
   renderer work — draw a sine underline in the cell's underline slot.
+  > **Status: SHIPPED for the next release (after v1.1.2)** — `4:0`–`4:5` + `21`
+  > double, `58`/`59` in colon and semicolon forms, stored in `CellExt` (a
+  > lazily-allocated per-line side array, so plain text pays nothing); hand-drawn
+  > smooth curl / dots / dashes / double that scale with pinch-zoom, in the
+  > underline color or the fg.
 - **Marked passages — OSC 8 hyperlinks.** Real semantic links (not regex-guessed). Tap to open
   the Android browser; long-press to copy or share. Pairs with the touch hint mode in Tier 3.
+  > **Status: SHIPPED for the next release (after v1.1.2)** — `OSC 8` open/close with
+  > `id=` grouping, URIs interned in a capped per-terminal `HyperlinkTable` (ids in
+  > the cell, swept when full), links survive into scrollback. Quiet dotted underline
+  > in the livery's accent; tap (or long-press inside mouse apps) raises a confirm
+  > sheet — real host + full URI, open (http/https/mailto only) / copy / select.
+  > Never opens silently.
 - **Soundings — shell integration (OSC 133 semantic prompts + OSC 7 cwd).** The terminal learns
   where prompts start/end and whether the last command succeeded. This unlocks a *lot*:
   prompt-to-prompt jump, a red/green mooring-post glyph in the gutter per command, cwd-aware

@@ -68,7 +68,9 @@ xterm-conformance-tested (see `TERMINAL.md`).
 | Gesture | In a normal shell | In a mouse app (htop, tmux w/ mouse) |
 |---|---|---|
 | tap | focus / raise keyboard | sends the click to the app |
+| tap a link | opens the link sheet | sends the click to the app |
 | long-press | select word (keeps paths whole) | select word |
+| long-press a link | opens the link sheet | opens the link sheet |
 | drag | scroll the scrollback | wheel-scroll the app |
 | drag from a selection | extend the selection | — |
 | pinch | zoom the glyphs (6–32 sp) | same |
@@ -86,6 +88,24 @@ xterm-conformance-tested (see `TERMINAL.md`).
   live grid.
 - Every grid re-snap flashes a **cols×rows** pill — ember-tinted when you're under
   80×24, which full-screen tools like btop insist on (zoom out, or go landscape).
+
+**Marked passages — links.** When the far side marks text as a real link (OSC 8 —
+`ls --hyperlink=auto`, `gcc`/`clang` diagnostics, `delta`, `systemctl`, `eza`, many
+modern tools), it wears a quiet dotted underline in your livery's accent. Tap it and a
+sheet rises — Charon never opens a link on a tap alone, because the far side chooses
+both the words and the target:
+
+- the words as they read in the grid, then **leads to** the real host, then the
+  **full address, verbatim** (select it if you like). Read the host: text saying
+  one thing and leading to another is the oldest trick there is.
+- **open** — hands it to your browser or mail app. Only `http`, `https` and `mailto`
+  links open; anything else (`file://`, `ssh://`, …) can only be copied.
+- **copy** — the address to the clipboard.
+- **select** — selects the words instead, as a long-press used to.
+
+While the sheet is up, every piece of that link glows — even when it's split across
+lines. Links stay tappable in your scrollback. Inside a mouse app (tmux with mouse
+on, htop) a tap belongs to the app; **long-press** the link to reach its sheet.
 
 **The accessory row** (above the keyboard):
 

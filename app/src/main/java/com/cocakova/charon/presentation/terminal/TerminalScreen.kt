@@ -139,6 +139,8 @@ fun TerminalScreen(
     // the lightbox share one cache so opening an image costs no second decode.
     val apparitionCache = remember(session.id) { ApparitionCache() }
     var lightbox by remember(session.id) { mutableStateOf<Apparition?>(null) }
+    // A marked passage (OSC 8 link) under the finger: the confirm sheet's subject.
+    var linkSighting by remember(session.id) { mutableStateOf<LinkSighting?>(null) }
     // Dredge the wake: search over scrollback + live grid. One query, one current
     // hit; nav walks the sightings and pins the glass on each. Recomputed off the
     // query and the cursor — cheap for a 10k-line scrollback, and output between
@@ -418,6 +420,8 @@ fun TerminalScreen(
                 apparitions = apparitionCache,
                 onApparitionTap = { lightbox = it },
                 search = searchState,
+                onLinkTap = { linkSighting = it },
+                highlightLink = linkSighting?.linkId ?: 0,
             )
 
             // A shade held up to the light: full screen, pinch to look closer, gold
@@ -427,6 +431,19 @@ fun TerminalScreen(
                     image = shade,
                     cache = apparitionCache,
                     onDismiss = { lightbox = null },
+                )
+            }
+
+            // A link from the far shore is untrusted: never opened on a tap alone.
+            // The sheet shows where it really leads, then open / copy / select.
+            linkSighting?.let { link ->
+                LinkSheet(
+                    sighting = link,
+                    onSelectWords = { cell ->
+                        linkSighting = null
+                        session.selectWordAt(cell)
+                    },
+                    onDismiss = { linkSighting = null },
                 )
             }
 

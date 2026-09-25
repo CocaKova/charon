@@ -16,6 +16,14 @@ class Line(cols: Int) {
         private set
     var isWrapped = false
 
+    /**
+     * Extended attrs ([CellExt]: underline style/color, hyperlink id), parallel to
+     * [attrs]. Lazily allocated the first time a cell here wears one and dropped
+     * again on [clear], so plain text — nearly every line — pays nothing.
+     */
+    var ext: LongArray? = null
+        private set
+
     private var combining: HashMap<Int, String>? = null
 
     /**
@@ -36,7 +44,26 @@ class Line(cols: Int) {
     fun set(col: Int, codePoint: Int, attr: Long) {
         codePoints[col] = codePoint
         attrs[col] = attr
+        ext?.set(col, 0L)
         combining?.remove(col)
+    }
+
+    /** [set] plus the cell's extended attrs; a zero [extAttr] never allocates. */
+    fun set(col: Int, codePoint: Int, attr: Long, extAttr: Long) {
+        codePoints[col] = codePoint
+        attrs[col] = attr
+        if (extAttr != 0L) {
+            (ext ?: LongArray(cols).also { ext = it })[col] = extAttr
+        } else {
+            ext?.set(col, 0L)
+        }
+        combining?.remove(col)
+    }
+
+    /** Extended attrs at [col]; 0 for a line that never allocated any. */
+    fun extAt(col: Int): Long {
+        val e = ext ?: return 0L
+        return e[col]
     }
 
     fun appendCombining(col: Int, codePoint: Int) {
@@ -56,12 +83,14 @@ class Line(cols: Int) {
     fun fill(from: Int, until: Int, codePoint: Int, attr: Long) {
         codePoints.fill(codePoint, from, until)
         attrs.fill(attr, from, until)
+        ext?.fill(0L, from, until)
         combining?.keys?.removeAll { it in from until until }
     }
 
     fun clear(attr: Long = CellAttrs.DEFAULT) {
         fill(0, cols, SPACE, attr)
         isWrapped = false
+        ext = null
         // Clearing a line clears what was drawn over it, and a recycled line must
         // never inherit the last occupant's shades.
         apparitions = null
@@ -93,6 +122,7 @@ class Line(cols: Int) {
         val shift = n.coerceAtMost(cols - col)
         codePoints.copyInto(codePoints, col + shift, col, cols - shift)
         attrs.copyInto(attrs, col + shift, col, cols - shift)
+        ext?.let { it.copyInto(it, col + shift, col, cols - shift) }
         remapCombining(col, shift, insert = true)
         fill(col, col + shift, SPACE, attr)
     }
@@ -103,6 +133,7 @@ class Line(cols: Int) {
         val shift = n.coerceAtMost(cols - col)
         codePoints.copyInto(codePoints, col, col + shift, cols)
         attrs.copyInto(attrs, col, col + shift, cols)
+        ext?.let { it.copyInto(it, col, col + shift, cols) }
         remapCombining(col, shift, insert = false)
         fill(cols - shift, cols, SPACE, attr)
     }
@@ -121,6 +152,7 @@ class Line(cols: Int) {
         }
         codePoints = newCp
         attrs = newAt
+        ext = ext?.copyOf(newCols) // zero-padded, like the attrs
         combining?.keys?.removeAll { it >= newCols }
     }
 

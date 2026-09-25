@@ -1,6 +1,7 @@
 package com.cocakova.charon.presentation.terminal
 
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
@@ -41,6 +42,7 @@ import com.cocakova.charon.R
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.Apparition
 import com.cocakova.charon.terminal.CellAttrs
+import com.cocakova.charon.terminal.CellExt
 import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.SearchEngine
 import com.cocakova.charon.terminal.TerminalEmulator
@@ -66,6 +68,10 @@ fun TerminalView(
     onApparitionTap: (Apparition) -> Unit = {},
     /** Dredge results to wash over the grid: every hit, plus the one the eye is on. */
     search: SearchEngine.SearchState? = null,
+    /** A marked passage (OSC 8 link) was touched: the confirm sheet opens on it. */
+    onLinkTap: (LinkSighting) -> Unit = {},
+    /** A link id to wash in the livery's accent — the one the sheet is showing. */
+    highlightLink: Int = 0,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -167,6 +173,33 @@ fun TerminalView(
         apparitionAt(hits, pos.x - paints.padX, pos.y - paints.padY)?.image
     }
 
+    /**
+     * The marked passage under a finger, if the cell there wears an OSC 8 link —
+     * with the link's words on that row (the run of cells sharing its id), so the
+     * sheet can set what the text says beside where it really leads.
+     */
+    fun linkUnder(pos: Offset): LinkSighting? = synchronized(session.lock) {
+        val term = session.term
+        val v = viewCellOf(pos)
+        val line = term.screen.viewLine(session.scrollOffset.value, v.row)
+        if (line.ext == null) return@synchronized null
+        val col = v.col.coerceAtMost(line.cols - 1)
+        val id = CellExt.linkId(line.extAt(col))
+        if (id == 0) return@synchronized null
+        val uri = term.hyperlinks.uri(id) ?: return@synchronized null
+        var from = col
+        while (from > 0 && CellExt.linkId(line.extAt(from - 1)) == id) from--
+        var to = col
+        while (to < line.cols - 1 && CellExt.linkId(line.extAt(to + 1)) == id) to++
+        val text = buildString {
+            for (c in from..to) {
+                if (!CellAttrs.hasStyle(line.attrs[c], CellAttrs.WIDE_CONTINUATION)) append(line.textAt(c))
+            }
+        }
+        LinkSighting(uri, id, text, TextSelection.Cell(v.row - session.scrollOffset.value, col))
+    }
+    val currentOnLinkTap by rememberUpdatedState(onLinkTap)
+
     // Selection edge-crawl: while a select-drag holds at the glass's top or bottom,
     // the viewport steps a row at a time (+1 = older) and the selection's focus rides
     // the revealed edge — how a finger reaches text that's off-screen.
@@ -206,16 +239,27 @@ fun TerminalView(
             // sure the keyboard is up (tmux-with-mouse used to swallow every tap, so
             // the keyboard could never be raised — showSoftInput is a no-op when it
             // already shows); otherwise just focus and raise.
+            //
+            // Marked passages (OSC 8): a tap opens the link sheet — unless the app
+            // has the mouse, in which case the click is the app's (it drew the link
+            // and may well answer clicks on it). A long-press reaches the link in
+            // every mode, the same way long-press select works inside mouse apps;
+            // the sheet's "select" falls back to the word select it replaced.
             .pointerInput(session, paints) {
                 detectTapGestures(
-                    onLongPress = { pos -> session.selectWordAt(selCellOf(pos)) },
+                    onLongPress = { pos ->
+                        val link = linkUnder(pos)
+                        if (link != null) currentOnLinkTap(link) else session.selectWordAt(selCellOf(pos))
+                    },
                     onTap = { pos ->
                         // A shade answers the tap before anything else: on a phone an
                         // inline image is a photo you can open, not a dead rectangle.
                         val shade = apparitionUnder(pos)
+                        val link = if (session.mouseActive) null else linkUnder(pos)
                         when {
                             session.selection.value != null -> session.clearSelection()
                             shade != null -> onApparitionTap(shade)
+                            link != null -> currentOnLinkTap(link)
                             session.mouseActive -> {
                                 session.mouseClick(viewCellOf(pos))
                                 onRequestFocus()
@@ -292,7 +336,7 @@ fun TerminalView(
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
                     size.width, size.height, cursorOn, selection, scrollOffset,
-                    session.cursorColor, apparitions, search,
+                    session.cursorColor, apparitions, search, highlightLink,
                 )
             }
         }
@@ -318,6 +362,8 @@ private const val CURSOR_TEAL = 0x3ECFB2
 private const val SEARCH_TEAL = 0x3ECFB2
 private const val SEARCH_GOLD = 0xD9A441
 private const val CURSOR_BLINK_NANOS = 530_000_000L
+/** A link's own dotted underline: present, never louder than the text it marks. */
+private const val LINK_ALPHA = 150
 
 /** How long after the last remote burst the render loop keeps riding the frame
  *  clock before parking on [TerminalSession.outputTick] — long enough that
@@ -358,6 +404,30 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
     val padX = cellWidth * 0.5f
     val padY = cellHeight * 0.30f
 
+    // The deep colors: underline geometry in cell space, all derived from the text
+    // size so a pinch-zoom carries every style with it. Each style is drawn by hand
+    // (the platform's underline can't curl, dot, or take its own color), and each
+    // pattern repeats per cell so a run broken by an attr change joins seamlessly.
+    val ulThickness = maxOf(1f, textSizePx / 15f)
+    /** Centre of a single underline, below the baseline, kept inside the cell. */
+    val ulY = minOf(baselineOffset + maxOf(ulThickness * 1.5f, textSizePx * 0.11f), cellHeight - ulThickness)
+    /** The upper of the two double-underline strokes; the lower sits 2 strokes down. */
+    val ulDoubleY = minOf(ulY, cellHeight - ulThickness * 2.5f)
+    /** Undercurl: one full wave per cell, amplitude a stroke-ish, hung a hair low. */
+    val curlAmp = maxOf(1f, ulThickness * 1.1f)
+    val curlY = minOf(ulY + curlAmp * 0.5f, cellHeight - curlAmp - ulThickness * 0.5f)
+    /** Dotted: square dots a stroke wide, an exact whole number per cell. */
+    val dotStep = cellWidth / maxOf(1, Math.round(cellWidth / (ulThickness * 2.5f)))
+    val deco = Paint()
+    val curl = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        strokeWidth = ulThickness
+        strokeJoin = Paint.Join.ROUND
+    }
+    /** Reused wave path — rewound, never reallocated, per run. */
+    val wave = Path()
+
     private companion object { const val LINE_SPACING = 1.16f }
 }
 
@@ -373,6 +443,7 @@ private fun drawTerminal(
     cursorColor: Int = CURSOR_TEAL,
     apparitions: ApparitionCache? = null,
     search: SearchEngine.SearchState? = null,
+    highlightLink: Int = 0,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -414,6 +485,8 @@ private fun drawTerminal(
         val line = term.screen.viewLine(scrollOffset, row)
         val top = row * ch
         val baseline = top + p.baselineOffset
+        // Extended attrs (undercurl, underline color, links) — null on nearly every line.
+        val lineExt = line.ext
         var col = 0
         while (col < term.cols) {
             val attrs = line.attrs[col]
@@ -421,6 +494,7 @@ private fun drawTerminal(
                 col++
                 continue
             }
+            val ext = if (lineExt != null) lineExt[col] else 0L // no boxing in the draw loop
             val cp = line.codePoints[col]
             val wide = CellAttrs.hasStyle(attrs, CellAttrs.WIDE)
             val simple = !wide && cp in 0x20..0x7E && line.combiningAt(col) == null
@@ -432,6 +506,7 @@ private fun drawTerminal(
                     val a2 = line.attrs[end]
                     val c2 = line.codePoints[end]
                     if (a2 != attrs || c2 !in 0x20..0x7E || line.combiningAt(end) != null) break
+                    if (lineExt != null && lineExt[end] != ext) break
                     end++
                 }
             }
@@ -446,12 +521,31 @@ private fun drawTerminal(
                 p.fill.color = opaque(bg)
                 canvas.drawRect(left, top, right, top + ch, p.fill)
             }
+            val linkId = CellExt.linkId(ext)
+            // The link the sheet is showing glows as a whole — every cell of it,
+            // split across rows or not, since they share one id.
+            if (linkId != 0 && linkId == highlightLink) {
+                p.fill.color = opaque(cursorColor)
+                p.fill.alpha = 80
+                canvas.drawRect(left, top, right, top + ch, p.fill)
+                p.fill.alpha = 255
+            }
             if (!CellAttrs.hasStyle(attrs, CellAttrs.INVISIBLE)) {
+                val alpha = if (CellAttrs.hasStyle(attrs, CellAttrs.FAINT)) 140 else 255
                 p.text.color = opaque(fg)
                 p.text.typeface = if (CellAttrs.hasStyle(attrs, CellAttrs.BOLD)) p.bold else p.regular
-                p.text.alpha = if (CellAttrs.hasStyle(attrs, CellAttrs.FAINT)) 140 else 255
-                p.text.isUnderlineText = CellAttrs.hasStyle(attrs, CellAttrs.UNDERLINE)
+                p.text.alpha = alpha
                 p.text.isStrikeThruText = CellAttrs.hasStyle(attrs, CellAttrs.STRIKETHROUGH)
+
+                // Underlines go down before the glyphs so descenders sit over them.
+                val ulStyle = CellExt.underlineStyle(attrs, ext)
+                if (ulStyle != CellExt.UL_NONE) {
+                    drawUnderline(canvas, p, ulStyle, left, right, top, resolveUl(ext, term, fg), alpha)
+                } else if (linkId != 0) {
+                    // A marked passage the remote didn't underline itself: a quiet
+                    // dotted line in the livery's accent, so links read as links.
+                    drawUnderline(canvas, p, CellExt.UL_DOTTED, left, right, top, cursorColor, LINK_ALPHA)
+                }
 
                 if (simple) {
                     sb.setLength(0)
@@ -561,6 +655,87 @@ private fun drawSearchHits(
     }
     p.fill.alpha = 255
 }
+
+/**
+ * One underline across [left, right) of the row at [top]. Allocation-free: rects for
+ * the straight styles, the shared [TerminalPaints.wave] rewound for the curl. Every
+ * pattern starts on a cell boundary and repeats per cell, so neighbouring runs meet
+ * without a seam.
+ */
+private fun drawUnderline(
+    canvas: android.graphics.Canvas,
+    p: TerminalPaints,
+    style: Int,
+    left: Float,
+    right: Float,
+    top: Float,
+    color: Int,
+    alpha: Int,
+) {
+    val t = p.ulThickness
+    val half = t / 2f
+    p.deco.color = opaque(color)
+    p.deco.alpha = alpha
+    when (style) {
+        CellExt.UL_DOUBLE -> {
+            val y = top + p.ulDoubleY
+            canvas.drawRect(left, y - half, right, y + half, p.deco)
+            canvas.drawRect(left, y + 2 * t - half, right, y + 2 * t + half, p.deco)
+        }
+        CellExt.UL_CURLY -> {
+            // A smooth wave from alternating quadratic arcs: each half-period's
+            // control point sits at twice the amplitude, which puts the crest at
+            // exactly the amplitude and matches slopes where arcs meet — no kinks,
+            // at any zoom.
+            val c = top + p.curlY
+            val halfWave = p.cellWidth / 2f
+            val w = p.wave
+            w.rewind()
+            w.moveTo(left, c)
+            var x = left
+            var up = true
+            while (x < right - 0.5f) {
+                val peak = if (up) c - 2 * p.curlAmp else c + 2 * p.curlAmp
+                w.quadTo(x + halfWave / 2f, peak, x + halfWave, c)
+                x += halfWave
+                up = !up
+            }
+            p.curl.color = opaque(color)
+            p.curl.alpha = alpha
+            canvas.drawPath(w, p.curl)
+        }
+        CellExt.UL_DOTTED -> {
+            val y = top + p.ulY
+            var x = left
+            while (x < right - 0.5f) {
+                canvas.drawRect(x, y - half, x + t, y + half, p.deco)
+                x += p.dotStep
+            }
+        }
+        CellExt.UL_DASHED -> {
+            // One dash per cell, a little over half its width.
+            val y = top + p.ulY
+            val dash = p.cellWidth * 0.55f
+            var x = left
+            while (x < right - 0.5f) {
+                canvas.drawRect(x + p.cellWidth * 0.1f, y - half, x + p.cellWidth * 0.1f + dash, y + half, p.deco)
+                x += p.cellWidth
+            }
+        }
+        else -> {
+            val y = top + p.ulY
+            canvas.drawRect(left, y - half, right, y + half, p.deco)
+        }
+    }
+}
+
+/** SGR 58's color when set, else the glyph's own (already inverse-resolved) fg. */
+private fun resolveUl(ext: Long, term: TerminalEmulator, fg: Int): Int =
+    when (CellExt.ulMode(ext)) {
+        CellAttrs.MODE_PALETTE -> term.palette[CellExt.ulColor(ext)]
+        CellAttrs.MODE_RGB -> CellExt.ulColor(ext)
+        else -> fg
+    }
 
 private fun resolveFg(attrs: Long, term: TerminalEmulator, defaultFg: Int, defaultBg: Int): Int {
     val inverse = CellAttrs.hasStyle(attrs, CellAttrs.INVERSE)

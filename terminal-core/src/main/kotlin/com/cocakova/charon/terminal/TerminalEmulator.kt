@@ -43,6 +43,13 @@ class TerminalEmulator(
     private var pendingWrap = false
     private var attrs = CellAttrs.DEFAULT
 
+    // The pen's extended half ([CellExt]): SGR's underline style/color, and the open
+    // OSC 8 link. Kept apart because SGR 0 wipes the first and never the second;
+    // [penExt] is their union, recomputed on change so print stays a plain store.
+    private var penUl = 0L
+    private var linkId = 0
+    private var penExt = 0L
+
     // Modes
     var autowrap = true; private set
     var originMode = false; private set
@@ -78,7 +85,7 @@ class TerminalEmulator(
     private var glIsG1 = false
 
     private class SavedCursor(
-        var x: Int = 0, var y: Int = 0, var attrs: Long = CellAttrs.DEFAULT,
+        var x: Int = 0, var y: Int = 0, var attrs: Long = CellAttrs.DEFAULT, var ul: Long = 0L,
         var g0: Char = TermCharsets.ASCII, var g1: Char = TermCharsets.ASCII,
         var glIsG1: Boolean = false, var originMode: Boolean = false,
         var pendingWrap: Boolean = false,
@@ -105,6 +112,14 @@ class TerminalEmulator(
 
     var title = ""
         private set
+
+    /**
+     * Marked passages: every OSC 8 URI this terminal holds, interned once. Cells
+     * carry the id; the app resolves a tapped cell's id back to its URI here. One
+     * table for both screens, so a link in scrollback keeps its target.
+     */
+    val hyperlinks = HyperlinkTable()
+    private var linkSweepCooldown = 0
 
     /**
      * OSC 133 semantic-prompt relay: (kind, extra) where kind ∈ A/B/C/D and extra
@@ -178,7 +193,7 @@ class TerminalEmulator(
         if (width == 2 && cursorX == cols - 1) {
             if (autowrap) {
                 // blank the orphan last column with current attrs, then wrap
-                screen.line(cursorY).set(cursorX, Line.SPACE, attrs)
+                screen.line(cursorY).set(cursorX, Line.SPACE, attrs, penExt)
                 markDirty(cursorY)
                 cursorX = 0
                 linefeed()
@@ -192,13 +207,13 @@ class TerminalEmulator(
         if (insertMode) line.insertCells(cursorX, width, attrs)
         clobberWide(line, cursorX)
         if (width == 2) {
-            line.set(cursorX, cp, attrs or CellAttrs.WIDE)
+            line.set(cursorX, cp, attrs or CellAttrs.WIDE, penExt)
             if (cursorX + 1 < cols) {
                 clobberWide(line, cursorX + 1)
-                line.set(cursorX + 1, Line.SPACE, attrs or CellAttrs.WIDE_CONTINUATION)
+                line.set(cursorX + 1, Line.SPACE, attrs or CellAttrs.WIDE_CONTINUATION, penExt)
             }
         } else {
-            line.set(cursorX, cp, attrs)
+            line.set(cursorX, cp, attrs, penExt)
         }
         markDirty(cursorY)
         lastPrinted = cp
@@ -374,6 +389,7 @@ class TerminalEmulator(
             0, 2 -> { title = arg; onTitle(arg) }
             1 -> {} // icon name — ignored
             4 -> oscPalette(arg)
+            8 -> oscHyperlink(arg)
             10 -> oscColor(arg, 10) { defaultFg = it }
             11 -> oscColor(arg, 11) { defaultBg = it }
             104 -> if (arg.isEmpty()) palette.reset() else arg.split(';').forEach {
@@ -698,7 +714,7 @@ class TerminalEmulator(
 
     private fun saveCursor() {
         val s = saved
-        s.x = cursorX; s.y = cursorY; s.attrs = attrs
+        s.x = cursorX; s.y = cursorY; s.attrs = attrs; s.ul = penUl
         s.g0 = g0; s.g1 = g1; s.glIsG1 = glIsG1
         s.originMode = originMode; s.pendingWrap = pendingWrap
     }
@@ -708,6 +724,8 @@ class TerminalEmulator(
         cursorX = s.x.coerceIn(0, cols - 1)
         cursorY = s.y.coerceIn(0, rows - 1)
         attrs = s.attrs
+        penUl = s.ul
+        refreshPenExt()
         g0 = s.g0; g1 = s.g1; glIsG1 = s.glIsG1
         originMode = s.originMode
         pendingWrap = false
@@ -731,6 +749,9 @@ class TerminalEmulator(
         insertMode = false
         autowrap = true
         attrs = CellAttrs.DEFAULT
+        penUl = 0L
+        linkId = 0 // an unterminated link must not bleed past a reset
+        refreshPenExt()
         g0 = TermCharsets.ASCII
         g1 = TermCharsets.ASCII
         glIsG1 = false
@@ -745,7 +766,7 @@ class TerminalEmulator(
         // DECSTR also resets the DECSC save state (DEC STD-070): a DECRC with no
         // save after a reset restores home + defaults, not a stale position.
         saved.let { s ->
-            s.x = 0; s.y = 0; s.attrs = CellAttrs.DEFAULT
+            s.x = 0; s.y = 0; s.attrs = CellAttrs.DEFAULT; s.ul = 0L
             s.g0 = TermCharsets.ASCII; s.g1 = TermCharsets.ASCII; s.glIsG1 = false
             s.originMode = false; s.pendingWrap = false
         }
@@ -773,6 +794,8 @@ class TerminalEmulator(
         lastPrinted = -1
         // The lines are gone, so their anchors are; drop the pixels behind them too.
         apparitions.store.clear()
+        hyperlinks.clear()
+        linkSweepCooldown = 0
         markAllDirty()
     }
 
@@ -781,57 +804,76 @@ class TerminalEmulator(
     private fun applySgr(params: CsiParams) {
         if (params.count == 0) {
             attrs = CellAttrs.DEFAULT
+            penUl = 0L
+            refreshPenExt()
             return
         }
         var i = 0
         while (i < params.count) {
             when (val p = params.get(i, 0)) {
-                0 -> attrs = CellAttrs.DEFAULT
+                0 -> { attrs = CellAttrs.DEFAULT; penUl = 0L }
                 1 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.BOLD)
                 2 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.FAINT)
                 3 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.ITALIC)
-                4 -> attrs = if (params.subCount(i) > 0 && params.sub(i, 1, 1) == 0) {
-                    CellAttrs.withoutStyle(attrs, CellAttrs.UNDERLINE)
-                } else {
-                    CellAttrs.withStyle(attrs, CellAttrs.UNDERLINE)
-                }
+                // 4 / 4:1 single, 4:2 double, 4:3 curly, 4:4 dotted, 4:5 dashed, 4:0 off.
+                // Only the colon form carries a style; `4;3` is underline + italic.
+                4 -> underline(if (params.subCount(i) > 0) params.sub(i, 1, 1) else CellExt.UL_SINGLE)
                 5, 6 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.BLINK)
                 7 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.INVERSE)
                 8 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.INVISIBLE)
                 9 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.STRIKETHROUGH)
-                21 -> attrs = CellAttrs.withStyle(attrs, CellAttrs.UNDERLINE) // xterm: double underline
+                21 -> underline(CellExt.UL_DOUBLE) // ECMA-48 / xterm: doubly underlined
                 22 -> attrs = CellAttrs.withoutStyle(CellAttrs.withoutStyle(attrs, CellAttrs.BOLD), CellAttrs.FAINT)
                 23 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.ITALIC)
-                24 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.UNDERLINE)
+                24 -> underline(CellExt.UL_NONE)
                 25 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.BLINK)
                 27 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.INVERSE)
                 28 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.INVISIBLE)
                 29 -> attrs = CellAttrs.withoutStyle(attrs, CellAttrs.STRIKETHROUGH)
                 in 30..37 -> attrs = CellAttrs.withFgPalette(attrs, p - 30)
-                38 -> i = extendedColor(params, i, isFg = true)
+                38 -> i = extendedColor(params, i, TARGET_FG)
                 39 -> attrs = CellAttrs.withDefaultFg(attrs)
                 in 40..47 -> attrs = CellAttrs.withBgPalette(attrs, p - 40)
-                48 -> i = extendedColor(params, i, isFg = false)
+                48 -> i = extendedColor(params, i, TARGET_BG)
                 49 -> attrs = CellAttrs.withDefaultBg(attrs)
+                // Underline color (kitty/VTE/xterm-patched): same forms as 38/48.
+                58 -> i = extendedColor(params, i, TARGET_UL)
+                59 -> penUl = CellExt.withDefaultUl(penUl)
                 in 90..97 -> attrs = CellAttrs.withFgPalette(attrs, p - 90 + 8)
                 in 100..107 -> attrs = CellAttrs.withBgPalette(attrs, p - 100 + 8)
                 else -> {}
             }
             i++
         }
+        refreshPenExt()
     }
 
-    /** Handles 38/48 in both colon (38:2:r:g:b, 38:5:i) and semicolon (38;2;r;g;b) forms. */
-    private fun extendedColor(params: CsiParams, i: Int, isFg: Boolean): Int {
+    /** Switch the underline to [style] (a `4:n` number; 0 = off). */
+    private fun underline(style: Int) {
+        if (style == CellExt.UL_NONE) {
+            attrs = CellAttrs.withoutStyle(attrs, CellAttrs.UNDERLINE)
+            penUl = CellExt.withUnderlineStyle(penUl, CellExt.UL_SINGLE) // back to the free 0
+        } else {
+            attrs = CellAttrs.withStyle(attrs, CellAttrs.UNDERLINE)
+            penUl = CellExt.withUnderlineStyle(penUl, style)
+        }
+    }
+
+    private fun refreshPenExt() {
+        penExt = CellExt.withLink(penUl, linkId)
+    }
+
+    /** Handles 38/48/58 in both colon (38:2:r:g:b, 38:5:i) and semicolon (38;2;r;g;b) forms. */
+    private fun extendedColor(params: CsiParams, i: Int, target: Int): Int {
         val subs = params.subCount(i)
         if (subs > 0) {
             when (params.sub(i, 1, -1)) {
-                5 -> setPalette(isFg, params.sub(i, 2, 0))
+                5 -> setPalette(target, params.sub(i, 2, 0))
                 2 -> {
                     // 38:2:r:g:b or 38:2:colorspace:r:g:b
                     val off = if (subs >= 5) 1 else 0
                     setRgb(
-                        isFg,
+                        target,
                         params.sub(i, 2 + off, 0),
                         params.sub(i, 3 + off, 0),
                         params.sub(i, 4 + off, 0),
@@ -841,20 +883,28 @@ class TerminalEmulator(
             return i
         }
         return when (params.get(i + 1, -1)) {
-            5 -> { setPalette(isFg, params.get(i + 2, 0)); i + 2 }
-            2 -> { setRgb(isFg, params.get(i + 2, 0), params.get(i + 3, 0), params.get(i + 4, 0)); i + 4 }
+            5 -> { setPalette(target, params.get(i + 2, 0)); i + 2 }
+            2 -> { setRgb(target, params.get(i + 2, 0), params.get(i + 3, 0), params.get(i + 4, 0)); i + 4 }
             else -> i
         }
     }
 
-    private fun setPalette(isFg: Boolean, index: Int) {
+    private fun setPalette(target: Int, index: Int) {
         val idx = index.coerceIn(0, 255)
-        attrs = if (isFg) CellAttrs.withFgPalette(attrs, idx) else CellAttrs.withBgPalette(attrs, idx)
+        when (target) {
+            TARGET_FG -> attrs = CellAttrs.withFgPalette(attrs, idx)
+            TARGET_BG -> attrs = CellAttrs.withBgPalette(attrs, idx)
+            else -> penUl = CellExt.withUlPalette(penUl, idx)
+        }
     }
 
-    private fun setRgb(isFg: Boolean, r: Int, g: Int, b: Int) {
+    private fun setRgb(target: Int, r: Int, g: Int, b: Int) {
         val rgb = (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
-        attrs = if (isFg) CellAttrs.withFgRgb(attrs, rgb) else CellAttrs.withBgRgb(attrs, rgb)
+        when (target) {
+            TARGET_FG -> attrs = CellAttrs.withFgRgb(attrs, rgb)
+            TARGET_BG -> attrs = CellAttrs.withBgRgb(attrs, rgb)
+            else -> penUl = CellExt.withUlRgb(penUl, rgb)
+        }
     }
 
     /** Erase operations fill with default fg but keep the current background (BCE). */
@@ -869,6 +919,49 @@ class TerminalEmulator(
     }
 
     // ------------------------------------------------------------------ OSC helpers
+
+    /**
+     * OSC 8 ; params ; URI — open a link (cells printed from here carry it); an empty
+     * URI closes it. params are `k=v` pairs split by ':'; only `id=` means anything.
+     * The URI may itself hold ';', so only the first one splits.
+     */
+    private fun oscHyperlink(arg: String) {
+        val sep = arg.indexOf(';')
+        val uri = if (sep >= 0) arg.substring(sep + 1) else ""
+        linkId = if (uri.isEmpty()) 0 else {
+            val idParam = arg.substring(0, sep).split(':')
+                .firstOrNull { it.startsWith("id=") }?.substring(3)
+            internLink(uri, idParam)
+        }
+        refreshPenExt()
+    }
+
+    /**
+     * Intern, sweeping the table once it fills: ids no cell on either screen (or in
+     * scrollback) still wears are dropped. A sweep walks every held line, so a
+     * stream minting endless distinct links can't make every OSC 8 pay for one —
+     * after a sweep that leaves the table mostly full, the next few hundred links
+     * are simply refused (their text still prints, just unlinked).
+     */
+    private fun internLink(uri: String, idParam: String?): Int {
+        val id = hyperlinks.intern(uri, idParam)
+        if (id != 0 || !hyperlinks.isFull) return id
+        if (linkSweepCooldown > 0) {
+            linkSweepCooldown--
+            return 0
+        }
+        val live = BitSet()
+        forEachScreenLine { line ->
+            val ext = line.ext ?: return@forEachScreenLine
+            for (e in ext) {
+                val l = CellExt.linkId(e)
+                if (l != 0) live.set(l)
+            }
+        }
+        hyperlinks.retainOnly(live)
+        if (hyperlinks.size > HyperlinkTable.MAX_LINKS * 3 / 4) linkSweepCooldown = LINK_SWEEP_COOLDOWN
+        return hyperlinks.intern(uri, idParam)
+    }
 
     private fun oscPalette(arg: String) {
         // OSC 4;index;spec — possibly repeated pairs
@@ -956,6 +1049,13 @@ class TerminalEmulator(
         private const val OSC = "\u001B]"
         private const val DCS = "\u001BP"
         private const val ST = "\u001B\\"
+
+        private const val TARGET_FG = 0
+        private const val TARGET_BG = 1
+        private const val TARGET_UL = 2
+
+        /** Links refused after a sweep that couldn't make room, before the next try. */
+        private const val LINK_SWEEP_COOLDOWN = 256
 
         /** Sentinel returned by [drainDirty] meaning "redraw everything". */
         val ALL_DIRTY = BitSet(0)
