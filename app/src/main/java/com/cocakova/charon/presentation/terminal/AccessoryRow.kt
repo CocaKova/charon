@@ -74,6 +74,7 @@ fun AccessoryRow(
     onKey: (KeyEncoder.Key) -> Unit,
     onText: (String) -> Unit,
     onPaste: () -> Unit,
+    onDredge: () -> Unit,
     rawInput: Boolean,
     onToggleInputMode: () -> Unit,
     modifier: Modifier = Modifier,
@@ -120,6 +121,8 @@ fun AccessoryRow(
         GroupGap()
 
         AccessoryKey("paste") { onPaste() }
+        // The dredge: reachable at the live edge, where no scrolled-back pill shows.
+        AccessoryKey("⌕") { onDredge() }
         // Fn: swaps the middle of the row to the F-key page. Gold while on it.
         AccessoryKey("fn", highlighted = fnPage, highlightColor = Styx.coin) {
             fnPage = !fnPage

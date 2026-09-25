@@ -457,7 +457,8 @@ fun TerminalScreen(
             }
 
             // Anchored to the live edge: the lading strip while cargo is moving,
-            // and the scrolled-back pill (tap to return; typing does the same).
+            // and the scrolled-back pills — ▼ live returns (typing does the same),
+            // ⌕ opens the dredge, since scrolled back is where you go looking.
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -467,16 +468,33 @@ fun TerminalScreen(
                 }
                 if (scrollOffset > 0) {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        "▼ live",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.background,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Styx.coin)
-                            .clickable { session.scrollToBottom() }
-                            .padding(horizontal = 18.dp, vertical = 7.dp),
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "▼ live",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.background,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Styx.coin)
+                                .clickable { session.scrollToBottom() }
+                                .padding(horizontal = 18.dp, vertical = 7.dp),
+                        )
+                        // Teal, like the rest of the dredge furniture.
+                        Text(
+                            "⌕",
+                            fontFamily = CharonMono,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.background,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Styx.water)
+                                .clickable { dredgeFocused = true }
+                                .padding(horizontal = 16.dp, vertical = 7.dp),
+                        )
+                    }
                 }
             }
 
@@ -604,6 +622,7 @@ fun TerminalScreen(
                 inputView?.textLandedOutsideIme()
                 clipboard.getText()?.text?.let { session.paste(it) }
             },
+            onDredge = { dredgeFocused = true },
             rawInput = inputMode == TerminalInputView.Mode.RAW,
             onToggleInputMode = {
                 inputMode = if (inputMode == TerminalInputView.Mode.RAW) {
@@ -993,6 +1012,11 @@ private fun DredgeBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Opened from a pill or a key, the bar is the thing you want to type into —
+    // so it asks for the caret itself rather than making you tap it.
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+
     Column(
         modifier = modifier.padding(top = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1007,7 +1031,7 @@ private fun DredgeBar(
                 onValueChange = onQuery,
                 singleLine = true,
                 placeholder = { Text("dredge the wake", color = Styx.mist) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).focusRequester(focus),
             )
             DredgePill("▲") { onStep(-1) }
             DredgePill("▼") { onStep(1) }
