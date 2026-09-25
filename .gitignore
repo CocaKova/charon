@@ -16,3 +16,6 @@ local.properties
 captures/
 *.apk
 *.aab
+
+# Signed release APKs (tools/sign-release.sh)
+dist/
