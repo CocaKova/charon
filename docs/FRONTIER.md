@@ -97,6 +97,12 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
   enhancement). Full modifier + key disambiguation. Helix, neovim, kakoune *require* this to
   tell `Ctrl+I` from `Tab`, report `Ctrl+Shift+key`, and handle key-release. Encoder work in
   `KeyEncoder` + a mode flag; the biggest single "modern TUI works right" unlock.
+  > **Status: LANDED (unreleased)** — per-screen flag stacks (`CSI > u` / `< u` / `= u` / `? u`,
+  > cleared by RIS and DECSTR) and a port of kitty's own encoder: flags 1 (disambiguate),
+  > 2 (press/repeat/release — hardware keys and RAW-mode soft keys), 4 (shifted + US base-layout
+  > alternates), 8 (all keys as escapes, modifier keys included) and 16 (associated text). Sticky
+  > Ctrl/Alt fold into the escape. IME-committed text stays plain text at every level, as in
+  > kitty. See `TERMINAL.md` § Kitty keyboard protocol.
 - **The deep colors — undercurl & colored underlines** (`SGR 4:3` curly / `4:4` dotted /
   `4:5` dashed, `SGR 58/59` underline color). This is how nvim draws LSP squiggles. Pure
   renderer work — draw a sine underline in the cell's underline slot.
@@ -110,6 +116,8 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
   offer to install them over the exec channel, same courier pattern as `ssh-copy-id`).
 - **XTVERSION / kitty query / DECRQSS** so remote programs *detect* Charon and light up their
   fancy paths. Without this, `kitten icat` won't even try to send an image.
+  > **Status: XTVERSION shipped in v1.1** (`DCS >| Charon(<version>) ST`); the kitty keyboard
+  > query (`CSI ? u`) landed with the protocol above. DECRQSS still to come.
 
 ---
 

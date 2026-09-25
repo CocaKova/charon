@@ -186,15 +186,44 @@ fun TerminalScreen(
     // Apply the sticky modifiers to whatever's about to go out: Ctrl folds a single
     // char to its control code, Alt (Meta) prefixes ESC. Armed modifiers fire once
     // then clear; locked ones persist. Any keystroke snaps the view to the bottom.
-    fun emit(raw: String, singleChar: Boolean) {
+    fun send(out: String) {
         session.scrollToBottom()
-        var out = raw
-        if (singleChar && ctrl != Sticky.OFF) out = KeyEncoder.ctrl(raw[0]) ?: raw
-        if (alt != Sticky.OFF) out = KeyEncoder.alt(out)
         session.sendText(out)
         session.trackInput(out) // feed the command-line reconstructor for autofill
         if (ctrl == Sticky.ARMED) ctrl = Sticky.OFF
         if (alt == Sticky.ARMED) alt = Sticky.OFF
+    }
+
+    fun stickyMods(): Int =
+        (if (ctrl != Sticky.OFF) KeyEncoder.MOD_CTRL else 0) or (if (alt != Sticky.OFF) KeyEncoder.MOD_ALT else 0)
+
+    fun emit(raw: String, singleChar: Boolean) {
+        val flags = session.term.kittyKeyboardFlags
+        var out = raw
+        if (KeyEncoder.kittyActive(flags)) {
+            // Kitty keyboard protocol: the sticky modifiers ride inside the key's own
+            // escape (sticky Ctrl + i is not Tab). A key the hardware path already
+            // encoded carries its own modifiers and goes out untouched.
+            val mods = stickyMods()
+            if (singleChar && mods != 0) out = KeyEncoder.encodeKittyChar(raw[0], mods, flags)
+            else if (alt != Sticky.OFF && !raw.startsWith(KeyEncoder.ESC)) out = KeyEncoder.alt(raw)
+        } else {
+            if (singleChar && ctrl != Sticky.OFF) out = KeyEncoder.ctrl(raw[0]) ?: raw
+            if (alt != Sticky.OFF) out = KeyEncoder.alt(out)
+        }
+        send(out)
+    }
+
+    // An accessory-row special key. Under the Kitty protocol both sticky modifiers
+    // fold into it (Ctrl+← is a real chord there); legacy carries Alt as an ESC
+    // prefix and drops Ctrl, as it always has.
+    fun emitKey(key: KeyEncoder.Key) {
+        val flags = session.term.kittyKeyboardFlags
+        if (KeyEncoder.kittyActive(flags)) {
+            KeyEncoder.encodeKitty(key, stickyMods(), flags)?.let(::send)
+        } else {
+            emit(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp), singleChar = false)
+        }
     }
 
     // A modifier armed on one ferry must not discharge into another: switching tabs
@@ -357,6 +386,7 @@ fun TerminalScreen(
                         onInput = { emit(it, it.length == 1) }
                         onPaste = { session.scrollToBottom(); session.paste(it) }
                         appCursorKeys = { session.term.cursorKeysApp }
+                        kittyKeyboardFlags = { session.term.kittyKeyboardFlags }
                         mode = inputMode
                     }.also { inputView = it }
                 },
@@ -367,6 +397,7 @@ fun TerminalScreen(
                     view.onInput = { emit(it, it.length == 1) }
                     view.onPaste = { session.scrollToBottom(); session.paste(it) }
                     view.appCursorKeys = { session.term.cursorKeysApp }
+                    view.kittyKeyboardFlags = { session.term.kittyKeyboardFlags }
                     view.secure = toll != null
                 },
                 modifier = Modifier.fillMaxSize().focusRequester(inputFocus),
@@ -609,9 +640,8 @@ fun TerminalScreen(
             onAlt = { alt = tapMod(alt) },
             onAltLock = { alt = lockMod(alt) },
             onKey = { key ->
-                // Special keys carry Alt (ESC prefix) but not Ctrl; encode then emit.
                 inputView?.textLandedOutsideIme()
-                emit(KeyEncoder.encode(key, appCursorKeys = session.term.cursorKeysApp), singleChar = false)
+                emitKey(key)
             },
             onText = {
                 inputView?.textLandedOutsideIme()

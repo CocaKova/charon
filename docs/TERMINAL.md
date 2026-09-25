@@ -42,7 +42,7 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
   (`ScreenBuffer.viewLine`) — see `docs/INPUT.md`
 - [x] Back-tab (CBT `ESC[Z`) in `KeyEncoder`
 - [ ] OSC 0/1/2 title; OSC 52 clipboard (behind per-host consent); OSC 4/104 palette
-- [ ] DECRQSS (minimal), XTVERSION
+- [ ] DECRQSS (minimal) — XTVERSION landed in v1.1 (see below)
 - [ ] Hardware keyboard (Ctrl/Alt combos, Ctrl+Shift+C/V)
 
 The **input/interaction** surface (accessory row, gestures, selection, mouse, IME) is
@@ -85,6 +85,68 @@ model out. See `docs/FRONTIER.md` Tier 1 for the why.
 Not aboard yet, and honest about it: **Sixel** (`DCS q`), Kitty **animation**
 (`a=f`/`a=c`, answered `ENOTSUP`), Kitty **Unicode placeholders** (`U=1`, the
 tmux-safe placement path), and **relative/virtual placements**.
+
+## Kitty keyboard protocol (progressive enhancement)
+
+*The Ferryman hears every word.* Spec: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>.
+The encoder is a port of kitty's own `key_encoding.c`, so where the prose could be read
+two ways, Charon answers the way crossterm/libtermkey/fish are tested against.
+
+**Mode stack** (`KittyKeyboardStack`, one per screen — main and alternate never share):
+
+| Sequence | Meaning |
+|---|---|
+| `CSI > flags u` | push (flags default 0); a full stack (16) evicts its oldest entry |
+| `CSI < n u` | pop n (default 1; an explicit 0 pops 1); popping past the bottom empties it |
+| `CSI = flags ; mode u` | modify the top entry: mode 1 replace (default), 2 OR, 3 AND-NOT; creates the entry on an empty stack |
+| `CSI ? u` | query → `CSI ? flags u` |
+
+Undefined bits are masked off (flags ∈ 0‥31). RIS and DECSTR clear both stacks (as kitty's
+resets do), so `reset` recovers from a program that died mid-enhancement. The alternate
+screen's stack survives leaving and re-entering it, as in kitty. Plain `CSI u` is still
+SCORC.
+
+**What each flag does on the wire** (`KeyEncoder.encodeKitty*`; the app reads
+`TerminalEmulator.kittyKeyboardFlags` beside `cursorKeysApp`):
+
+| Flag | Supported | Notes |
+|---|---|---|
+| 1 disambiguate | yes | Esc → `CSI 27u`; Ctrl/Alt/Super chords on text keys → `CSI cp;mods u` (Ctrl+I ≠ Tab, Ctrl+[ ≠ Esc); modified Enter/Tab/Backspace → `CSI 13/9/127;mods u`; Shift+Tab → `CSI 9;2u`; arrows/Home/End/F1–F4 drop SS3 and DECCKM (`CSI A`, `CSI 1;5D`, `CSI P`, F3 = `CSI 13~`) |
+| 2 event types | yes, where Android delivers them | repeat `:2`, release `:3`. Hardware keyboards report all three (`onKeyDown` repeatCount / `onKeyUp`); the soft keyboard in **RAW** mode also reports releases (its IME synthesizes the up-stroke). The accessory row and predictive-IME text have no key-up and report presses only. Unmodified Enter/Tab/Backspace never report a release below flag 8 (spec) |
+| 4 alternate keys | yes | shifted key when Shift is held (`CSI 97:65;6u`) and the US PC-101 base-layout key when it differs (`CSI 97::113;5u` on AZERTY) — Android keycodes name physical US positions, so the keycode answers it. Soft-keyboard chars carry a shifted key only for A–Z |
+| 8 all keys as escapes | yes, for key events | plain letters, Enter/Tab/Backspace and bare modifier keys (Shift, Ctrl, Alt, Super, Caps/Num/Scroll Lock → `CSI 574xx u`) all report as escapes from the hardware keyboard / RAW mode |
+| 16 associated text | yes | typed text as code points in the third field (`CSI 97;2;65u`); releases carry none |
+
+Modifiers are `1 + bits` (shift 1, alt 2, ctrl 4, super 8, caps 64, num 128); Android's
+Meta (Windows/⌘) key is reported as **super**. Lock bits are sent as the spec requires, so
+Ctrl+A with Num Lock on is `CSI 97;133u`. Flags 4 and 16 alone change nothing (they only
+reshape escapes the other bits produce), and flag 2 alone keeps legacy bytes for Esc and
+Ctrl/Alt letters — both exactly as kitty.
+
+**Input paths.**
+
+- *Hardware keyboard* (`TerminalInputView.onKeyDown/onKeyUp` → `HardwareKeys`): the full
+  event — key, modifiers, press/repeat/release.
+- *Accessory row*: sticky Ctrl **and** Alt fold into the key's escape (sticky Ctrl + ← is
+  `CSI 1;5D`; in legacy, Ctrl still doesn't apply to special keys and Alt stays an ESC
+  prefix). A single typed character with a sticky modifier goes through
+  `KeyEncoder.encodeKittyChar` (CR = Enter, DEL = Backspace, `C` = Shift+c).
+- *Soft keyboard, predictive mode*: **committed text stays plain text at every flag
+  level**, as kitty does with its own IME commits. The IME speaks in words, corrections
+  and backspace diffs, not key events; turning a glide-typed word into per-letter escapes
+  would break the one thing that mode exists for. helix, nvim and fish push flags 1
+  (+4), where plain text is plain text anyway, so nothing they need is lost; a program
+  that pushes flag 8 still receives what you type, just not as escapes. Use RAW mode if a
+  flag-8 program must see soft-keyboard keys as key events.
+
+With no flags pushed every path is byte-for-byte the legacy encoder
+(`KeyEncoderTest.legacyTableIsPinned`).
+
+**Not aboard:** keypad keys stay their non-keypad equivalents (`KP_*` codes are never
+sent — Android's numpad Enter is Enter); F13–F35, media keys and Hyper/Meta modifiers
+(no Android source for them). AltGr (right Alt alone) counts as typing when the layout
+turns it into a character, and as Alt otherwise — the legacy path, unchanged, still
+treats it as Alt.
 
 ## Explicit non-goals (until someone asks)
 

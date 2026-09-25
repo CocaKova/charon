@@ -56,6 +56,9 @@ class TerminalInputView(context: Context) : View(context) {
     /** DECCKM state provider, wired to the live emulator. */
     var appCursorKeys: () -> Boolean = { false }
 
+    /** Kitty keyboard-protocol flags provider (0 = legacy), wired to the live emulator. */
+    var kittyKeyboardFlags: () -> Int = { 0 }
+
     var mode: Mode = Mode.PREDICTIVE
         set(value) {
             if (field == value) return
@@ -527,27 +530,28 @@ class TerminalInputView(context: Context) : View(context) {
         return true
     }
 
+    /**
+     * Key-ups only speak under the Kitty protocol's event-types flag (2): a release
+     * is real on a hardware keyboard — and on the soft keyboard in RAW mode, whose
+     * IME synthesizes the up-stroke right behind the down. Legacy ignores them.
+     */
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        val flags = kittyKeyboardFlags()
+        if (!KeyEncoder.kittyActive(flags)) return super.onKeyUp(keyCode, event)
+        val encoded = HardwareKeys.encodeKitty(keyCode, event, flags)
+            ?: return super.onKeyUp(keyCode, event)
+        onInput?.invoke(encoded)
+        return true
+    }
+
     private fun encodeKeyEvent(keyCode: Int, event: KeyEvent): String? {
+        // Kitty keyboard protocol pushed by the remote: the whole event, modifiers
+        // and all, goes into one escape. Otherwise the legacy bytes, unchanged.
+        val flags = kittyKeyboardFlags()
+        if (KeyEncoder.kittyActive(flags)) return HardwareKeys.encodeKitty(keyCode, event, flags)
+
         val app = appCursorKeys()
-        val special = when (keyCode) {
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> KeyEncoder.Key.ENTER
-            KeyEvent.KEYCODE_DEL -> KeyEncoder.Key.BACKSPACE
-            KeyEvent.KEYCODE_FORWARD_DEL -> KeyEncoder.Key.DELETE
-            KeyEvent.KEYCODE_TAB -> KeyEncoder.Key.TAB
-            KeyEvent.KEYCODE_ESCAPE -> KeyEncoder.Key.ESCAPE
-            KeyEvent.KEYCODE_DPAD_UP -> KeyEncoder.Key.UP
-            KeyEvent.KEYCODE_DPAD_DOWN -> KeyEncoder.Key.DOWN
-            KeyEvent.KEYCODE_DPAD_LEFT -> KeyEncoder.Key.LEFT
-            KeyEvent.KEYCODE_DPAD_RIGHT -> KeyEncoder.Key.RIGHT
-            KeyEvent.KEYCODE_MOVE_HOME -> KeyEncoder.Key.HOME
-            KeyEvent.KEYCODE_MOVE_END -> KeyEncoder.Key.END
-            KeyEvent.KEYCODE_PAGE_UP -> KeyEncoder.Key.PAGE_UP
-            KeyEvent.KEYCODE_PAGE_DOWN -> KeyEncoder.Key.PAGE_DOWN
-            KeyEvent.KEYCODE_INSERT -> KeyEncoder.Key.INSERT
-            in KeyEvent.KEYCODE_F1..KeyEvent.KEYCODE_F12 ->
-                KeyEncoder.Key.entries[KeyEncoder.Key.F1.ordinal + (keyCode - KeyEvent.KEYCODE_F1)]
-            else -> null
-        }
+        val special = HardwareKeys.special(keyCode)
         if (special != null) return KeyEncoder.encode(special, appCursorKeys = app)
 
         val ch = event.getUnicodeChar(event.metaState and KeyEvent.META_CTRL_MASK.inv() and KeyEvent.META_ALT_MASK.inv())

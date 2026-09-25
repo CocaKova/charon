@@ -106,6 +106,9 @@ Three states, applied to whatever you send next (`TerminalScreen.emit`):
   `KeyEncoder.ctrl`. It doesn't apply to multi-char input or special keys.
 - **Alt** (Meta) prefixes `ESC` to whatever goes out (`KeyEncoder.alt`), including
   arrows/F-keys — xterm `metaSendsEscape`.
+- While the remote has pushed **Kitty keyboard** flags (`TERMINAL.md` § Kitty keyboard
+  protocol) both modifiers fold into the key's own escape instead — sticky Ctrl + `i` is
+  `CSI 105;5u` (not Tab), sticky Ctrl + ← is `CSI 1;5D`, sticky Alt + Esc is `CSI 27;3u`.
 - **armed** clears itself after one send; **locked** persists (so `Ctrl` locked +
   typing sends a stream of control codes — handy for readline, careful with
   `Ctrl-S` XOFF).

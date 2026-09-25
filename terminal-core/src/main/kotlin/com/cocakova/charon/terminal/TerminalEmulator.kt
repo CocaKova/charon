@@ -59,6 +59,15 @@ class TerminalEmulator(
     var cursorStyle = 1; private set        // DECSCUSR: 0/1 blink block … 6 steady bar
     private var linefeedMode = false        // LNM
 
+    // Kitty keyboard protocol: one enhancement stack per screen (the spec's rule),
+    // so flags a TUI pushes on the alternate screen never follow you back out.
+    private val kittyKeysMain = KittyKeyboardStack()
+    private val kittyKeysAlt = KittyKeyboardStack()
+    private val kittyKeys: KittyKeyboardStack get() = if (usingAlt) kittyKeysAlt else kittyKeysMain
+
+    /** Kitty keyboard enhancement flags in force on the active screen (0 = legacy). */
+    val kittyKeyboardFlags: Int get() = kittyKeys.flags
+
     private var scrollTop = 0
     private var scrollBottom = initialRows - 1
 
@@ -269,6 +278,7 @@ class TerminalEmulator(
             "?" -> when (final) {
                 'h' -> for (i in 0 until maxOf(params.count, 1)) decMode(params.get(i, 0), true)
                 'l' -> for (i in 0 until maxOf(params.count, 1)) decMode(params.get(i, 0), false)
+                'u' -> onResponse("$CSI?${kittyKeys.flags}u") // kitty keyboard: query flags
                 'n' -> when (params.get(0, 0)) {
                     6 -> onResponse("$CSI?${reportRow()};${cursorX + 1}R")
                     15 -> onResponse("$CSI?13n")      // no printer
@@ -282,8 +292,11 @@ class TerminalEmulator(
                 // XTVERSION. Without a name, tools that gate their modern paths on
                 // knowing the terminal — `kitten icat` among them — never even try.
                 'q' -> onResponse("${DCS}>|Charon($versionName)$ST")
+                'u' -> kittyKeys.push(params.get(0, 0))      // kitty keyboard: push
                 else -> {}
             }
+            "<" -> if (final == 'u') kittyKeys.pop(params.getOr1(0))   // kitty keyboard: pop
+            "=" -> if (final == 'u') kittyKeys.set(params.get(0, 0), params.get(1, 1))
             "!" -> if (final == 'p') softReset()                  // DECSTR
             " " -> if (final == 'q') cursorStyle = params.get(0, 1) // DECSCUSR
             else -> {}
@@ -725,6 +738,10 @@ class TerminalEmulator(
         cursorKeysApp = false
         keypadApp = false
         reverseWraparound = false // xterm's DECSTR resets mode 45
+        // kitty's soft reset forgets the keyboard stacks too: a program that died
+        // mid-enhancement is exactly what `tput init`/`reset` are run to recover from.
+        kittyKeysMain.reset()
+        kittyKeysAlt.reset()
         // DECSTR also resets the DECSC save state (DEC STD-070): a DECRC with no
         // save after a reset restores home + defaults, not a stale position.
         saved.let { s ->
