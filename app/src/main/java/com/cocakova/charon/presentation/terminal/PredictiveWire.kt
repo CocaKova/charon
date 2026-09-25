@@ -72,14 +72,21 @@ class PredictiveWire {
 
     /**
      * A composition or commit is about to begin with no composing span open: it
-     * lands at the IME's cursor. That maps to the wire only when everything after
-     * the cursor is blank — otherwise the insert would happen mid-line, where the
-     * wire cursor cannot go.
+     * lands at the IME's cursor, replacing the selection [start]..[end] if there is
+     * one. That maps to the wire only when everything after the selection is blank —
+     * otherwise the insert would happen mid-line, where the wire cursor cannot go.
+     *
+     * A selection is exactly a composing region the IME opened by other means: the
+     * default `InputConnection.replaceText` (Android 14+) is
+     * `finishComposingText → setSelection(start, end) → commitText`, so a word picked
+     * that way must retract the selected text, not land beside it.
      */
-    fun anchorAtCursor(mirror: String, selection: Int) {
-        val sel = selection.coerceIn(0, mirror.length)
-        val tail = mirror.substring(sel)
+    fun anchorAtCursor(mirror: String, start: Int, end: Int = start) {
+        val lo = minOf(start, end).coerceIn(0, mirror.length)
+        val hi = maxOf(start, end).coerceIn(0, mirror.length)
+        val tail = mirror.substring(hi)
         if (tail.isBlank()) {
+            relayed = mirror.substring(lo, hi)
             wireTail = tail
             offWire = false
         } else {
@@ -109,23 +116,55 @@ class PredictiveWire {
     }
 
     /**
-     * The IME deleted [codePoints] of committed text before its cursor. Backspaces
-     * only reach it when the cursor is at the end of the line; anywhere else is
-     * off-wire.
+     * The IME deleted [codePoints] of text ending at [at] — the selection start, or
+     * the composition's start when one is open (a deletion never eats the
+     * composition; that is `BaseInputConnection`'s rule, and the editable follows
+     * it). Whatever sits between [at] and the line's end must come off the wire and
+     * go back on around the deletion. That is safe only when it is the open
+     * composition plus its blank tail — text this bridge itself put there. Anything
+     * else is off-wire.
      */
-    fun deleteBefore(mirror: String, selection: Int, codePoints: Int): Op {
+    fun deleteBefore(mirror: String, at: Int, codePoints: Int): Op {
         if (offWire) return Op.NONE
-        if (selection != mirror.length) {
+        val after = mirror.substring(at.coerceIn(0, mirror.length))
+        if (after.isNotEmpty() && after != relayed + wireTail) {
             goOffWire()
             return Op.NONE
         }
-        return if (codePoints > 0) Op(codePoints, "") else Op.NONE
+        if (codePoints <= 0) return Op.NONE
+        return Op(codePoints + after.codePointCount(0, after.length), after)
     }
 
-    /** A raw DEL key event went straight to the wire, bypassing the connection.
-     *  True when the mirror should drop its last character to match. */
-    fun mirrorsRawBackspace(mirrorLength: Int): Boolean =
-        relayed.isEmpty() && mirrorLength > 0
+    /**
+     * The IME deleted text *after* its cursor. The wire cursor sits at the line's
+     * end, so there is never anything after it to reach: off-wire whenever the
+     * deletion actually removes something.
+     */
+    fun deleteAfter(codePoints: Int) {
+        if (codePoints > 0) goOffWire()
+    }
+
+    /**
+     * A DEL key event went straight to the wire, bypassing the connection: the last
+     * character of the line is gone. The mirror drops its last character to match
+     * (true when there is one), and the bridge forgets that character too — from the
+     * blank tail first, since that is what sits at the end of the line.
+     */
+    fun rawBackspace(mirrorLength: Int): Boolean {
+        if (wireTail.isNotEmpty()) wireTail = wireTail.dropLastCodePoint()
+        else if (relayed.isNotEmpty()) relayed = relayed.dropLastCodePoint()
+        return mirrorLength > 0
+    }
+
+    /**
+     * A printable key event went straight to the wire and landed at the end of the
+     * line. Any open composition is now committed ahead of it — it can no longer
+     * be retracted by a diff — so the bridge starts over after the new character.
+     */
+    fun rawTyped() {
+        if (offWire) return
+        settle()
+    }
 
     private fun relay(new: String): Op {
         if (offWire) return Op.NONE
@@ -147,6 +186,10 @@ class PredictiveWire {
     }
 
     companion object {
+        private fun String.dropLastCodePoint(): String =
+            if (length >= 2 && Character.isSurrogatePair(this[length - 2], this[length - 1])) dropLast(2)
+            else dropLast(1)
+
         /**
          * Replace [old] with [new] on a line whose only cursor is at its end:
          * retract the differing tail with backspaces, then type the new one.

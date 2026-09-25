@@ -45,10 +45,27 @@ keyboard talks to the grid. State persists (prefs `charon` / `input_mode`).
   | `getExtractedText()` returns `null` | "this field has no text to replace" | the mirror, handed over whole |
   | `initialSelStart/End` left at `-1` | "cursor position unknown" — before a single keystroke | seeded to 0 on a fresh connection |
   | `commitCorrection()` returns `false` | "this field can't be corrected" | accepted (the text already arrived via `commitText`) |
+  | `replaceText()` (Android 14+) edits the editable directly | the word it swapped in is in the field — but it never passed `commitText`, so **nothing reached the wire** | routed as the interface default spells it: finish composing → select → commit, and a commit over a selection retracts the selected text |
+
+  The mirror is the wire's line, so key events that bypass the connection are
+  mirrored too: a DEL key drops the line's last character (composition or not —
+  the bridge forgets that character as well), a printable key appends and ends
+  the composition, and any other key (Tab completion, history arrows, Ctrl-U)
+  restarts the connection, since the remote just rewrote the line. Deletions are
+  measured where `BaseInputConnection` actually cuts — before the composition,
+  never through it — and a deletion *before* an open composition lifts the
+  composition off the wire, deletes, and sets it back down.
+
+  **The trace.** Debug builds log every connection call to logcat tag
+  `CharonInput` — positions and lengths, never text. On a release build:
+  `adb shell setprop log.tag.CharonInput DEBUG`, reopen the keyboard, type, then
+  `adb logcat -s CharonInput`. That is how a new keyboard's call order gets
+  written down before it gets fixed.
 
   The mapping itself — what is on the wire versus what the IME thinks is in the
   field — lives in `PredictiveWire`, which has no Android in it and is unit-tested
-  against real Gboard call sequences (`PredictiveWireTest`). The connection is a
+  against real Gboard call sequences and the `InputConnection` defaults other
+  keyboards lean on (`PredictiveWireTest`). The connection is a
   thin adapter over it. **If you touch this, add the sequence to that test first:**
   this bug has been fixed twice, and both times the hole was a call order nobody
   had written down.

@@ -209,11 +209,126 @@ class PredictiveWireTest {
         assertTrue(wire.holdsState(0))
     }
 
+    /**
+     * `InputConnection.replaceText` (Android 14+) as the interface's default spells
+     * it: finish the composition, select the word, commit over the selection. This
+     * is the path that used to send nothing at all — the tapped prediction changed
+     * the IME's field and never reached the wire.
+     */
     @Test
-    fun aRawBackspaceOnlyMirrorsWhenNoCompositionIsOpen() {
-        assertTrue(wire.mirrorsRawBackspace(3))
+    fun replacingASelectedWordRetractsItFirst() {
         wire.anchorAtCursor("", 0)
-        wire.compose("g")
-        assertFalse(wire.mirrorsRawBackspace(3))
+        compose("hel")
+        far.apply(wire.finishComposing())
+        wire.anchorAtCursor("hel", 0, 3)
+        commit("hello")
+        assertEquals("hello", far.toString())
+    }
+
+    @Test
+    fun replacingASelectedWordKeepsTheBlankTail() {
+        wire.anchorAtCursor("", 0)
+        compose("teh")
+        commit("teh ")
+        wire.anchorAtCursor("teh ", 0, 3)
+        commit("the")
+        assertEquals("the ", far.toString())
+    }
+
+    @Test
+    fun aSelectionWithRealTextAfterItGoesOffWire() {
+        wire.anchorAtCursor("", 0)
+        compose("git status")
+        commit("git status")
+        val before = far.toString()
+        wire.anchorAtCursor("git status", 0, 3)
+        assertTrue(wire.offWire)
+        commit("gut")
+        assertEquals(before, far.toString())
+    }
+
+    /** Pick-a-prediction the long way: end the composition, delete it, commit the word. */
+    @Test
+    fun deleteThenCommitReplacesThePartialWord() {
+        wire.anchorAtCursor("", 0)
+        compose("hel")
+        far.apply(wire.finishComposing())
+        far.apply(wire.deleteBefore("hel", 3, 3))
+        wire.anchorAtCursor("", 0)
+        commit("hello ")
+        assertEquals("hello ", far.toString())
+    }
+
+    /**
+     * A deletion never eats the open composition — it cuts *before* it. On the wire
+     * that means lifting the composition off, deleting, and setting it back down.
+     */
+    @Test
+    fun deletingBeforeAnOpenCompositionSetsTheCompositionBackDown() {
+        wire.anchorAtCursor("", 0)
+        compose("git")
+        commit("git ")
+        wire.anchorAtCursor("git ", 4)
+        compose("st")
+        far.apply(wire.deleteBefore("git st", 4, 1))
+        assertEquals("gitst", far.toString())
+        assertEquals("st", wire.relayed)
+        compose("sta")
+        assertEquals("gitsta", far.toString())
+    }
+
+    @Test
+    fun deletingAfterTheCursorGoesOffWire() {
+        wire.anchorAtCursor("", 0)
+        compose("git")
+        wire.deleteAfter(0)
+        assertFalse(wire.offWire)
+        wire.deleteAfter(1)
+        assertTrue(wire.offWire)
+    }
+
+    /** A DEL key event mid-composition: the wire lost a character the bridge had sent. */
+    @Test
+    fun aRawBackspaceDuringCompositionIsForgottenByTheBridge() {
+        wire.anchorAtCursor("", 0)
+        compose("hel")
+        far.apply(PredictiveWire.Op(1, "")) // the key event's own DEL, straight to the wire
+        assertTrue(wire.rawBackspace(3))
+        assertEquals("he", wire.relayed)
+        compose("he")
+        assertEquals("he", far.toString())
+        compose("hey")
+        assertEquals("hey", far.toString())
+    }
+
+    @Test
+    fun aRawBackspaceTakesTheBlankTailFirst() {
+        wire.anchorAtCursor("", 0)
+        compose("teh")
+        commit("teh ")
+        wire.composingRegion("teh ", 0, 3)
+        far.apply(PredictiveWire.Op(1, ""))
+        wire.rawBackspace(4)
+        assertEquals("", wire.wireTail)
+        commit("the")
+        assertEquals("the", far.toString())
+    }
+
+    @Test
+    fun aRawBackspaceOnAnEmptyMirrorHasNothingToMirror() {
+        assertFalse(wire.rawBackspace(0))
+        assertTrue(wire.rawBackspace(3))
+    }
+
+    /** A key event typed past an open composition commits it: never retract it later. */
+    @Test
+    fun aRawKeyCommitsTheCompositionAheadOfIt() {
+        wire.anchorAtCursor("", 0)
+        compose("git")
+        far.apply(PredictiveWire.Op(0, "-")) // the key event's own character
+        wire.rawTyped()
+        wire.anchorAtCursor("git-", 4)
+        compose("s")
+        assertEquals("git-s", far.toString())
     }
 }

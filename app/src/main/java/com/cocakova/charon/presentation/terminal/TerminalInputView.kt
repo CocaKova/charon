@@ -18,6 +18,8 @@ import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.TextAttribute
+import androidx.annotation.RequiresApi
 import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.terminal.input.KeyEncoder
 
@@ -121,6 +123,9 @@ class TerminalInputView(context: Context) : View(context) {
     }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        // Read once per connection: `adb shell setprop log.tag.CharonInput DEBUG`
+        // turns the trace on for a release build, from the next keyboard session.
+        trace = BuildConfig.DEBUG || Log.isLoggable(TAG, Log.DEBUG)
         logInput { "input connection created, mode=$mode" }
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or
             EditorInfo.IME_FLAG_NO_EXTRACT_UI or
@@ -219,14 +224,27 @@ class TerminalInputView(context: Context) : View(context) {
             report()
         }
 
-        /** Mirror a wire-side backspace (IME sent a raw DEL key event). */
+        /** A DEL key event already took the line's last character off the wire; the
+         *  mirror follows, composition or not — the mirror is the wire's line. */
         fun mirrorBackspace() {
             val e = getEditable() ?: return
-            // Composing IMEs retract through the composition instead.
-            if (!wire.mirrorsRawBackspace(e.length)) return
+            if (!wire.rawBackspace(e.length)) return
             val cut = if (e.length >= 2 && Character.isSurrogatePair(e[e.length - 2], e[e.length - 1])) 2 else 1
             e.delete(e.length - cut, e.length)
             Selection.setSelection(e, e.length)
+            logInput { "mirror raw DEL ${geometry()}" }
+            report()
+        }
+
+        /** A printable key event already landed at the end of the wire's line; the
+         *  mirror gains it too, and any open composition is over. */
+        fun mirrorTyped(text: String) {
+            val e = getEditable() ?: return
+            wire.rawTyped()
+            BaseInputConnection.removeComposingSpans(e)
+            e.append(text)
+            Selection.setSelection(e, e.length)
+            logInput { "mirror raw key ${geometry()}" }
             report()
         }
 
@@ -249,7 +267,7 @@ class TerminalInputView(context: Context) : View(context) {
             val lo = minOf(start, end).coerceIn(0, e.length)
             val hi = maxOf(start, end).coerceIn(0, e.length)
             wire.composingRegion(e.toString(), lo, hi)
-            logInput { "composeRegion ${hi - lo}ch offWire=${wire.offWire}" }
+            logInput { "composeRegion $lo..$hi ${geometry()}" }
             report()
             return handled
         }
@@ -257,8 +275,7 @@ class TerminalInputView(context: Context) : View(context) {
         override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
             val t = text.toString()
             anchorIfLoose()
-            logInput { "compose len=${t.length}${if (wire.offWire) " off-wire" else ""}" }
-            emit(wire.compose(t))
+            emit(wire.compose(t), "compose len=${t.length} cur=$newCursorPosition")
             val handled = super.setComposingText(text, newCursorPosition)
             report()
             return handled
@@ -267,8 +284,7 @@ class TerminalInputView(context: Context) : View(context) {
         override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
             val t = text.toString()
             anchorIfLoose()
-            logInput { "commit len=${t.length}${if (wire.offWire) " off-wire" else ""}" }
-            emit(wire.commit(t))
+            emit(wire.commit(t), "commit len=${t.length} cur=$newCursorPosition")
             val handled = super.commitText(text, newCursorPosition)
             settleMirror(t)
             report()
@@ -279,9 +295,63 @@ class TerminalInputView(context: Context) : View(context) {
             // Composition ends as-is: everything relayed stands, nothing to retract.
             val handled = super.finishComposingText()
             wire.finishComposing()
+            logInput { "finishComposing ${geometry()}" }
             settleMirror("")
             report()
             return handled
+        }
+
+        /**
+         * `BaseInputConnection.replaceText` (Android 14+) edits the editable directly
+         * and never passes through [commitText] — a word replaced that way (a
+         * keyboard swapping in the prediction you tapped) changed the IME's field and
+         * sent nothing down the wire. Route it the way the interface's own default
+         * does, through the overridden calls, so the wire hears the diff.
+         */
+        @RequiresApi(34)
+        override fun replaceText(
+            start: Int,
+            end: Int,
+            text: CharSequence,
+            newCursorPosition: Int,
+            textAttribute: TextAttribute?,
+        ): Boolean {
+            val e = getEditable() ?: return false
+            logInput { "replaceText $start..$end len=${text.length} cur=$newCursorPosition ${geometry()}" }
+            beginBatchEdit()
+            finishComposingText()
+            setSelection(start.coerceIn(0, e.length), end.coerceIn(0, e.length))
+            commitText(text, newCursorPosition)
+            endBatchEdit()
+            return true
+        }
+
+        override fun setSelection(start: Int, end: Int): Boolean {
+            val handled = super.setSelection(start, end)
+            logInput { "setSelection $start..$end ${geometry()}" }
+            report()
+            return handled
+        }
+
+        override fun sendKeyEvent(event: KeyEvent): Boolean {
+            logInput { "sendKeyEvent action=${event.action} code=${event.keyCode}" }
+            return super.sendKeyEvent(event)
+        }
+
+        override fun getTextBeforeCursor(length: Int, flags: Int): CharSequence? =
+            super.getTextBeforeCursor(length, flags).also { logInput { "getTextBefore $length -> ${it?.length}" } }
+
+        override fun getTextAfterCursor(length: Int, flags: Int): CharSequence? =
+            super.getTextAfterCursor(length, flags).also { logInput { "getTextAfter $length -> ${it?.length}" } }
+
+        override fun performEditorAction(actionCode: Int): Boolean {
+            logInput { "performEditorAction $actionCode" }
+            return super.performEditorAction(actionCode)
+        }
+
+        override fun requestCursorUpdates(cursorUpdateMode: Int): Boolean {
+            logInput { "requestCursorUpdates $cursorUpdateMode" }
+            return super.requestCursorUpdates(cursorUpdateMode)
         }
 
         /**
@@ -293,27 +363,36 @@ class TerminalInputView(context: Context) : View(context) {
         override fun commitCorrection(correctionInfo: CorrectionInfo?): Boolean = true
 
         override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-            logInput { "deleteSurrounding $beforeLength/$afterLength${if (wire.offWire) " off-wire" else ""}" }
-            relayDeletion { e, sel ->
-                val from = (sel - beforeLength).coerceAtLeast(0)
-                if (from < sel) Character.codePointCount(e, from, sel) else 0
-            }
+            logInput { "deleteSurrounding $beforeLength/$afterLength ${geometry()}" }
+            relayDeletion(
+                before = { e, at ->
+                    val from = (at - beforeLength).coerceAtLeast(0)
+                    if (from < at) Character.codePointCount(e, from, at) else 0
+                },
+                after = { e, at ->
+                    val to = (at + afterLength).coerceAtMost(e.length)
+                    if (at < to) Character.codePointCount(e, at, to) else 0
+                },
+            )
             val handled = super.deleteSurroundingText(beforeLength, afterLength)
             report()
             return handled
         }
 
         override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
-            logInput { "deleteSurroundingCp $beforeLength/$afterLength${if (wire.offWire) " off-wire" else ""}" }
-            relayDeletion { e, sel ->
-                var remaining = beforeLength
-                var i = sel
-                while (remaining > 0 && i > 0) {
-                    i -= if (i >= 2 && Character.isSurrogatePair(e[i - 2], e[i - 1])) 2 else 1
-                    remaining--
-                }
-                beforeLength - remaining
-            }
+            logInput { "deleteSurroundingCp $beforeLength/$afterLength ${geometry()}" }
+            relayDeletion(
+                before = { e, at ->
+                    var remaining = beforeLength
+                    var i = at
+                    while (remaining > 0 && i > 0) {
+                        i -= if (i >= 2 && Character.isSurrogatePair(e[i - 2], e[i - 1])) 2 else 1
+                        remaining--
+                    }
+                    beforeLength - remaining
+                },
+                after = { e, at -> Character.codePointCount(e, at, e.length).coerceAtMost(afterLength) },
+            )
             val handled = super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
             report()
             return handled
@@ -342,24 +421,49 @@ class TerminalInputView(context: Context) : View(context) {
             flags = 0
         }
 
-        /** A deletion of committed text before the cursor: backspaces, but only when
-         *  the cursor is at the line's end — the only place the wire cursor is. */
-        private inline fun relayDeletion(count: (Editable, Int) -> Int) {
+        /**
+         * A deletion around the cursor, measured where `BaseInputConnection` will
+         * actually cut: before the selection start or the composition's start,
+         * whichever is earlier, and after whichever end is later — a deletion never
+         * eats the composition itself. [before]/[after] count code points from there.
+         */
+        private inline fun relayDeletion(before: (Editable, Int) -> Int, after: (Editable, Int) -> Int) {
             val e = getEditable() ?: return
-            val sel = Selection.getSelectionEnd(e).let { if (it < 0) e.length else it }
-            emit(wire.deleteBefore(e.toString(), sel, count(e, sel)))
+            var a = minOf(Selection.getSelectionStart(e), Selection.getSelectionEnd(e))
+            var b = maxOf(Selection.getSelectionStart(e), Selection.getSelectionEnd(e))
+            if (a < 0) { a = e.length; b = e.length }
+            val ca = getComposingSpanStart(e)
+            val cb = getComposingSpanEnd(e)
+            if (ca >= 0 && cb >= 0) {
+                a = minOf(a, ca, cb)
+                b = maxOf(b, ca, cb)
+            }
+            wire.deleteAfter(after(e, b))
+            emit(wire.deleteBefore(e.toString(), a, before(e, a)), "delete")
         }
 
-        /** A composition or commit with no span open lands at the IME's cursor;
-         *  tell the wire where that is before it plans anything. */
+        /** A composition or commit with no span open lands at the IME's cursor —
+         *  over the selection, if there is one; tell the wire where that is before
+         *  it plans anything. */
         private fun anchorIfLoose() {
             val e = getEditable() ?: return
             if (wire.relayed.isNotEmpty() || getComposingSpanStart(e) >= 0) return
-            val sel = Selection.getSelectionEnd(e).let { if (it < 0) e.length else it }
-            wire.anchorAtCursor(e.toString(), sel)
+            val start = Selection.getSelectionStart(e).let { if (it < 0) e.length else it }
+            val end = Selection.getSelectionEnd(e).let { if (it < 0) e.length else it }
+            wire.anchorAtCursor(e.toString(), start, end)
         }
 
-        private fun emit(op: PredictiveWire.Op) {
+        /** The shape of the field and the bridge — positions and lengths, never text. */
+        fun geometry(): String {
+            val e = getEditable() ?: return "(no editable)"
+            return "sel=${Selection.getSelectionStart(e)}..${Selection.getSelectionEnd(e)} " +
+                "comp=${getComposingSpanStart(e)}..${getComposingSpanEnd(e)} len=${e.length} " +
+                "relayed=${wire.relayed.length} tail=${wire.wireTail.length}" +
+                if (wire.offWire) " OFF-WIRE" else ""
+        }
+
+        private fun emit(op: PredictiveWire.Op, what: String) {
+            logInput { "$what -> bs=${op.backspaces} ins=${op.insert.length} ${geometry()}" }
             if (op.backspaces > 0) {
                 onInput?.invoke(KeyEncoder.encode(KeyEncoder.Key.BACKSPACE).repeat(op.backspaces))
             }
@@ -409,9 +513,16 @@ class TerminalInputView(context: Context) : View(context) {
         if (encoded == null) return super.onKeyDown(keyCode, event)
         onInput?.invoke(encoded)
         // Key events bypass the InputConnection; keep the predictive mirror honest.
-        when (keyCode) {
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> predictive?.lineReset()
-            KeyEvent.KEYCODE_DEL -> predictive?.mirrorBackspace()
+        when {
+            keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER -> predictive?.lineReset()
+            keyCode == KeyEvent.KEYCODE_DEL -> predictive?.mirrorBackspace()
+            // A plain character lands at the line's end, exactly where the mirror can follow.
+            encoded.firstOrNull()?.let { it >= ' ' && it != '\u007f' } == true &&
+                !event.isCtrlPressed && !event.isAltPressed -> predictive?.mirrorTyped(encoded)
+            // Tab completion, history arrows, Ctrl-U: the remote rewrote the line in
+            // ways the mirror can't know. Start the IME over rather than let it edit a
+            // line that no longer exists.
+            else -> textLandedOutsideIme()
         }
         return true
     }
@@ -466,12 +577,17 @@ class TerminalInputView(context: Context) : View(context) {
     private fun imm(): InputMethodManager =
         context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
 
-    // Event names only, never key content: typed text includes remote passwords.
+    /** Debug builds always; release builds when `log.tag.CharonInput` is DEBUG. */
+    private var trace = BuildConfig.DEBUG
+
+    // Event names, positions and lengths only, never key content: typed text
+    // includes remote passwords.
     private inline fun logInput(message: () -> String) {
-        if (BuildConfig.DEBUG) Log.d("CharonInput", message())
+        if (trace) Log.d(TAG, message())
     }
 
     private companion object {
+        const val TAG = "CharonInput"
         const val LINE_CAP = 1024
     }
 }
