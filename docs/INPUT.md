@@ -154,7 +154,7 @@ stopping a fling consumes an honest tap's micro-moves, and must not eat it).
 strip **above** the accessory row offering inline completions as you type —
 Termius-class autocomplete, in theme.
 
-Three blended sources, ranked in this order:
+Blended sources, ranked in this order:
 
 1. **Your history** (`CommandHistory`, prefs `charon_history`, cap 300, deduped) —
    full past lines that continue the draft; the most personal signal, first.
@@ -201,11 +201,50 @@ Three blended sources, ranked in this order:
    `ls -1Ap` of its directory (dotfiles included, 15 s TTL, last 8 directories
    cached), in any argument position, for any command, spec'd or not.
    Directories cascade (`etc/` keeps completing into the next level); files
-   close the token with a space. Absolute and `~/` only — the two shapes
-   knowable without tracking the shell's cwd; relative paths await OSC 7 shell
-   integration (FRONTIER). `ssh`/`scp`/`sftp`/`rsync` also complete
+   close the token with a space. `ssh`/`scp`/`sftp`/`rsync` also complete
    `user@host` — the user half is yours, the host half matches the remote's
    ssh book.
+5. **Soundings — where the shell stands** (OSC 7). A rigged prompt reports its
+   working directory (`docs/HORN.md` has the rig, bash/zsh/fish, and what tmux
+   needs). `terminal-core` parses the report (`ShellCwd`: strict `file://` URL,
+   percent-decoded to UTF-8, malformed → ignored); `TerminalSession.cwd` holds it
+   and forgets it on Enter at a normal-screen prompt (the next rigged prompt
+   re-reports; an onward ssh or a REPL never will), on alt-screen crossings, on
+   tmux's empty report, and on a dropped transport; `RemoteContext.resolveCwd`
+   believes it only if it names this host (short-name match against a `hostname`
+   probe) or no host. With a believed cwd:
+   - **Relative paths** — a bare name in a *file position* completes from
+     `ls -1Ap -- '<cwd>/<dir>/'` through the same cache as absolute paths (same
+     TTL, same 8-directory cap; `./` folds away so `./src/` and `src/` share an
+     entry). Dotfiles wait until you type the dot; a name with a space is inserted
+     backslash-escaped. File positions are declared, not guessed: a spec's
+     `paths` (`ls`, `tar`, `grep`, `du`, `chmod`/`chown`, `git add/diff/restore/
+     rm/mv/checkout/reset`, `scp`/`rsync` beside their hosts; `cd` and `find` take
+     directories only), a flag mapped to `ArgKind.PATH` (`ssh -i`, `curl -o`,
+     `wget -O`, `tar -xzf`), a command invoked by path (`./deploy.sh`), and —
+     the shell's own default — any argument of a command with no spec at all,
+     except a short `NOT_FILES` list (`man`, `which`, `kill`-likes, `echo`…).
+     Never the command word itself, never a flag, never a flag's non-file value
+     (`scp -P`, `git checkout -b`, `find -name` map to `NONE` and stay quiet),
+     and never a token the shell would rewrite first (quotes, `$`, globs,
+     `--opt=`, `host:path`). Relative names rank after grammar and live values.
+   - **Git branches** — one probe per cwd,
+     `git -C '<cwd>' for-each-ref --format='%(refname)' refs/heads refs/remotes`
+     (full names: short names can't tell a local `origin/x` from the remote one;
+     outside a repo git fails quietly and the answer is "no branches"), cached
+     like a directory listing, read three ways: `checkout`/`switch` offer
+     **`GIT_BRANCH`** — local heads plus remote-tracking names with the remote
+     stripped, the DWIM names those commands create on the spot (`origin/HEAD`
+     never offered); `merge`/`rebase`/`log`/`diff`/`reset`/`cherry-pick`/`show`
+     offer **`GIT_REF`** — heads plus `origin/x`; `branch -d/-D/-m` offer
+     **`GIT_LOCAL_BRANCH`** — heads only. Only the last is **closed-world**: the
+     heads are exactly what `-d` can delete, so a branch deleted last week can't
+     resurface from history. The other two are **open-world** on purpose — tags,
+     SHAs, `HEAD~2`, files and brand-new DWIM names are all valid there and none
+     of them is in the probe, so history keeps its voice beside the branches.
+
+   Without a believed cwd, completion is exactly what it was: absolute and `~/`
+   paths only, and git positions offer their flags and subcommands as before.
 
 The flow: `tm` → `tmux` → (space cascades) `attach` `new` `ls`… → `-t` → your
 actual session names. Completion follows the shell's own structure: `sudo`,

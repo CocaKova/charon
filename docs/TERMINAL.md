@@ -197,6 +197,20 @@ Not aboard yet: **hover** (no pointer on a phone — the sheet's highlight stand
 underline color through **DECRQSS** (not implemented at all), and `OSC 8` link
 **hints** over plain-text URLs (Tier 3's catch).
 
+## Shell integration (soundings)
+
+- [x] **OSC 133** semantic prompts — `A`/`B`/`C`/`D[;exit]` relayed through
+  `onShellMark`; the app pairs `D` with the submitted line for the horn
+  (`docs/HORN.md`). Marks never touch the grid.
+- [x] **OSC 7** working directory — `ESC ] 7 ; file://host/path` (BEL or ST).
+  `ShellCwd.parse`: `file:` scheme only (case-insensitive), host = the authority
+  (`""` for `file:///p` or `file:/p`), path percent-decoded to strict UTF-8 (raw
+  non-ASCII a lenient shell left unencoded is taken as itself), trailing slash
+  dropped, control characters and paths over 4096 chars refused. A malformed report
+  is ignored and the last good one stands; an **empty** report clears it (tmux's way
+  of saying the active pane has no path). Exposed as `TerminalEmulator.cwd` +
+  `onCwd`; what it means for completion lives in the app (`docs/INPUT.md` §2b).
+
 ## Explicit non-goals (until someone asks)
 
 Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), perfect

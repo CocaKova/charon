@@ -2,6 +2,7 @@ package com.cocakova.charon.ssh
 
 import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.cargo.CargoLading
+import com.cocakova.charon.terminal.ShellCwd
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.terminal.input.KeyEncoder
@@ -83,6 +84,7 @@ class TerminalSession(
     fun feedRemote(bytes: ByteArray, offset: Int, length: Int) {
         synchronized(lock) {
             val before = term.screen.scrollbackSize
+            cwdReported = false
             term.write(bytes, offset, length)
             lastOutputAt = System.nanoTime()
             // The remote spoke: whatever keystroke was waiting on its echo has been
@@ -101,6 +103,10 @@ class TerminalSession(
                 selection.value = null
                 endToll()
                 _cargo.value = null
+                // The shell that reported the cwd is not the one in front of us now —
+                // unless the new world spoke its own in this very burst (tmux on
+                // attach, or the outer shell's prompt as tmux lets go).
+                if (!cwdReported) _cwd.value = null
             }
             val grew = term.screen.scrollbackSize - before
             // The toll: release when the prompt line moves on (Enter answered, the
@@ -248,6 +254,10 @@ class TerminalSession(
     var onCommandDone: ((command: String, exitCode: Int?, durationMs: Long) -> Unit)? = null
 
     init {
+        term.onCwd = {
+            cwdReported = true
+            _cwd.value = it
+        }
         term.onShellMark = { kind, extra ->
             val now = System.nanoTime()
             when (kind) {
@@ -262,6 +272,27 @@ class TerminalSession(
                 else -> {}
             }
         }
+    }
+
+    // ---- Soundings (the shell's working directory) ----------------------------------
+    // A rigged prompt reports its cwd via OSC 7 (docs/HORN.md); relative-path and
+    // branch completion read it. It is trusted only while it can still be true: Enter
+    // at a primary-screen prompt forgets it, because the next rigged prompt reports
+    // afresh and anything else — an onward ssh, a REPL, an unrigged shell — never
+    // will. On the alternate screen (tmux) Enter keeps it: tmux forwards the active
+    // pane's path only when it *changes*, and says so with an empty report when the
+    // pane has none.
+
+    private val _cwd = MutableStateFlow<ShellCwd?>(null)
+    /** The shell's working directory as last reported, or null when unknown. */
+    val cwd: StateFlow<ShellCwd?> = _cwd
+
+    /** An OSC 7 landed during the current [feedRemote] burst. */
+    private var cwdReported = false
+
+    /** The transport dropped: whatever shell reported the cwd went down with it. */
+    fun forgetCwd() {
+        _cwd.value = null
     }
 
     // ---- The lading (package installs) -----------------------------------------------
@@ -312,7 +343,11 @@ class TerminalSession(
         while (i < sent.length) {
             val c = sent[i]
             when {
-                c == '\r' || c == '\n' -> { commitLine(); i++ }
+                c == '\r' || c == '\n' -> {
+                    commitLine()
+                    if (!wasAltScreen) _cwd.value = null   // the next rigged prompt re-sounds it
+                    i++
+                }
                 c == '\u0003' -> { resetLine(); _cargo.value = null; voyage = null; i++ } // ^C sinks lading + voyage
                 c == '\u0015' -> { resetLine(); i++ }                      // ^U
                 c == '\u0017' -> { deleteWord(); i++ }                     // ^W

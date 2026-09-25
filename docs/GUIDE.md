@@ -158,6 +158,20 @@ Charon's suggestions come from the *host you're on*, not a canned dictionary:
   remote's own `~/.ssh/config`.
 - Paths complete anywhere: any argument starting `/` or `~/` lists the remote
   directory, cascading level by level.
+- **Soundings** — rig your shell with the block in [HORN.md](HORN.md) (the same one
+  the horn uses) and the prompt tells Charon where you're standing. Then bare names
+  complete from *that* directory: `vim no` → `notes.txt`, `cd s` → `src/`,
+  `cat src/ma` → `main.c`. Only where a file makes sense — never for the command
+  itself, a flag, or something like `man ` or `tmux attach -t `. Dotfiles appear
+  once you type the dot.
+- **Branches**, same rig: in a repo, `git checkout ` / `git switch ` offer your
+  branches (including ones that exist only on the remote, by the name `switch`
+  would create), `git merge ` / `rebase ` / `log ` / `diff ` offer `origin/…` too,
+  and `git branch -d ` offers only local branches.
+- The soundings switch themselves off whenever they can't be sure: right after you
+  press Enter until the next prompt reports in, after you `ssh` onward to another
+  machine, inside a REPL. Then you get exactly the old behaviour — `/` and `~/`
+  paths only. In tmux they need two lines in `~/.tmux.conf` (see HORN.md).
 - Chained commands are understood — after `&&`, `|`, `;` it completes a fresh
   command.
 - History recall: full lines you've run before, current-host lines first.
@@ -239,8 +253,8 @@ From the session switcher, **⇆** charts channels:
 
 ## 10. The horn
 
-Flip **the horn** at the helm and rig your shell with the one-liner in
-[HORN.md](HORN.md): any command that runs ≥ 15 s while you're in another app blows
+Flip **the horn** at the helm and rig your shell with the block in
+[HORN.md](HORN.md) (the same rig powers the soundings in §5): any command that runs ≥ 15 s while you're in another app blows
 the horn — a notification saying it finished (or *ran aground* with its exit code).
 Command lines never appear on the lock screen.
 
@@ -286,7 +300,12 @@ Gear icon on the Dock:
   pair with tmux auto-attach (§9) so even a kill costs nothing.
 - **No horn notifications** — Android 13+ needs the notification permission Charon
   asks for on first run; check it wasn't denied, and verify the shell rig
-  (`HORN.md`).
+  (`HORN.md`). Inside tmux the marks need `set -g allow-passthrough on`.
+- **Relative paths / branches don't complete** — the shell rig (`HORN.md`) isn't
+  loaded (open a new shell after adding it), or you're inside tmux without the two
+  `~/.tmux.conf` lines from HORN.md, or the prompt names a different machine than
+  the one you crossed to (an onward ssh — by design). `/…` and `~/…` paths work
+  either way.
 - **Host key changed warning** — someone reinstalled the host's OS, or something is
   impersonating it. Verify out-of-band before replacing the pin.
 - **Import from Tailscale finds nothing** — the fetch runs `tailscale status` on an

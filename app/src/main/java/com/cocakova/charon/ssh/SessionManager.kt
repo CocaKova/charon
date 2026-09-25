@@ -266,8 +266,13 @@ class SessionManager(
                         // Inventory the host for autofill on every crossing (PATH can
                         // change between redials; the probe is one cheap exec).
                         ms.remote?.refreshCommands()
+                        // …and learn its name, which a trustworthy OSC 7 cwd must match.
+                        ms.remote?.refreshHost()
                     }
                     is TerminalSession.State.Disconnected -> {
+                        // The shell that reported a working directory died with the
+                        // transport; the redialed one will sound its own.
+                        ms.session.forgetCwd()
                         // The channels died with the transport; drop the handles so a
                         // redial can chart them fresh.
                         dropForwards(ms)

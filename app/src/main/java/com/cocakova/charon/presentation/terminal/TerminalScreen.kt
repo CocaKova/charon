@@ -278,8 +278,14 @@ fun TerminalScreen(
             .filter { CommandGate.isCommandLine(it, installed) && !SecretGate.carriesSecret(it) }
             .toList()
     }
-    val suggestions = remember(draft, cleanHistory, ctxVersion) {
-        Completer.complete(draft, cleanHistory, remoteContext)
+    // Where the shell stands (OSC 7), once vouched for as a directory on this host —
+    // what relative paths and branch names complete against. Null = unrigged, or
+    // the shell hasn't re-sounded since the last Enter; completion falls back to
+    // absolute and ~/ paths only.
+    val reportedCwd by session.cwd.collectAsState()
+    val cwd = remember(reportedCwd, ctxVersion) { remoteContext?.resolveCwd(reportedCwd) }
+    val suggestions = remember(draft, cleanHistory, ctxVersion, cwd) {
+        Completer.complete(draft, cleanHistory, remoteContext, cwd = cwd)
     }
 
     // Charted channels sheet, raised from the switcher's ⇆.

@@ -128,6 +128,17 @@ class TerminalEmulator(
      */
     var onShellMark: ((Char, Int?) -> Unit)? = null
 
+    /**
+     * Where the shell last said it stands (OSC 7), or null when it never has — or
+     * when tmux reported that the active pane has no known path (an empty OSC 7).
+     */
+    var cwd: ShellCwd? = null
+        private set
+
+    /** OSC 7 relay: fired with each believed report (null = cleared), from the
+     *  writer's thread. Malformed reports are dropped before they get here. */
+    var onCwd: ((ShellCwd?) -> Unit)? = null
+
     /** Bumped on every visible mutation; renderers conflate on this. */
     var generation = 0L
         private set
@@ -406,6 +417,18 @@ class TerminalEmulator(
                     val extra = arg.substringAfter(';', "")
                         .takeWhile { it.isDigit() }.toIntOrNull()
                     onShellMark?.invoke(kind, extra)
+                }
+            }
+            // OSC 7: the shell reports its working directory as a file:// URL. An
+            // empty report is tmux saying the active pane has none; a malformed one
+            // is dropped and the last good report stands.
+            7 -> if (arg.isEmpty()) {
+                cwd = null
+                onCwd?.invoke(null)
+            } else {
+                ShellCwd.parse(arg)?.let {
+                    cwd = it
+                    onCwd?.invoke(it)
                 }
             }
             // iTerm2 inline images — what `imgcat` speaks.

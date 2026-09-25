@@ -30,6 +30,11 @@ data class Suggestion(
  * last `&&`/`||`/`|`/`;` completes as a fresh command, and env assignments plus
  * `sudo`/`doas` are transparent prefixes.
  *
+ * When the shell has said where it stands ([cwd], from OSC 7 — already checked to
+ * be a directory on this host), bare names in file positions complete from that
+ * directory, and git positions offer the repo's branches. Without it, only the
+ * absolute and `~/` paths that need no cwd complete.
+ *
  * Pure and synchronous — dynamic fetches happen in RemoteContext off-thread; this
  * only reads caches (pre-built set + sorted list), so it can run on every keystroke.
  */
@@ -39,6 +44,7 @@ object Completer {
         draft: String,
         history: List<String>,
         remote: RemoteContext?,
+        cwd: String? = null,
         max: Int = 6,
     ): List<Suggestion> {
         if (draft.isBlank()) return emptyList()
@@ -61,19 +67,21 @@ object Completer {
         // Grammar + live host first, so we know whether this is a *value position* —
         // a spot a dynamic argument kind governs (`-t ` → tmux sessions).
         val grammar = LinkedHashMap<String, Suggestion>()
-        val valueKind = if (complete.isEmpty()) {
+        val position = if (complete.isEmpty()) {
             completeCommandName(partial, history, remote, grammar)
-            null
+            // A command named by its path (`./deploy.sh`, `bin/run`) is a file too.
+            Position(null, if ('/' in partial) ArgKind.PATH else ArgKind.NONE)
         } else {
-            completeArguments(complete, partial, remote, grammar)
+            completeArguments(complete, partial, remote, cwd, grammar)
         }
+        val valueKind = position.value
 
         // In a *closed-world* value position the live host has answered, it is the
         // authority: history recall would resurrect session/container names that no
         // longer exist, ranked above the ones that do. Open-world kinds (ssh hosts)
         // keep history as a legitimate voice — the probe knows only a subset.
         val hostRules = valueKind != null && valueKind.closedWorld &&
-            remote?.landed(valueKind) == true
+            remote?.landed(valueKind, cwd) == true
 
         // Keyed by display so a history line and a token offer of the same word
         // become one chip; the first writer wins the insert.
@@ -86,10 +94,17 @@ object Completer {
         }
         completePath(partial, remote, out)
         grammar.values.forEach { offer(out, it) }
+        // Relative names rank after the grammar: a branch, subcommand or live value
+        // is the more specific answer where both could apply (`git checkout ma`).
+        completeRelative(partial, position.files, remote, cwd, out)
         return out.values.take(max)
     }
 
-    // ---- paths: absolute and ~/ — the only ones knowable without the shell's cwd ----
+    /** What the cursor's position takes: the dynamic kind governing it (for the
+     *  closed-world rule), and whether — and which — host files belong there. */
+    private data class Position(val value: ArgKind?, val files: ArgKind)
+
+    // ---- paths: absolute and ~/ need no cwd; relative ones need the shell's word ----
 
     /** Complete `/abs/…` and `~/…` tokens from a live listing of their directory —
      *  works in any argument position, for any command, spec'd or not. Directories
@@ -112,6 +127,47 @@ object Completer {
                 offer(out, Suggestion(entry, base.length, insert))
             }
     }
+
+    /**
+     * Complete a bare name (`no`, `src/ma`, `../lib/`) from the shell's reported
+     * [cwd] — only in a position that takes files ([files] is PATH or DIRECTORY),
+     * never for a flag, and never for a token the shell would rewrite before it
+     * names a file (quotes, `$VAR`, globs, `--opt=`, `host:path`). The listing is
+     * keyed by the joined absolute directory, so it shares [RemoteContext]'s path
+     * cache with absolute completion. Dotfiles wait until you type the dot; the
+     * inserted tail is backslash-escaped so a name with a space stays one word.
+     */
+    private fun completeRelative(
+        partial: String,
+        files: ArgKind,
+        remote: RemoteContext?,
+        cwd: String?,
+        out: MutableMap<String, Suggestion>,
+    ) {
+        if (remote == null || cwd == null || !files.isPath) return
+        if (partial.startsWith("/") || partial.startsWith("~") || partial.startsWith("-")) return
+        if (partial.any { it in NOT_LITERAL }) return
+        val slash = partial.lastIndexOf('/')
+        val dir = partial.substring(0, slash + 1)
+        val base = partial.substring(slash + 1)
+        // `./src/` and `src/` are one directory — and one cache entry.
+        var rel = dir
+        while (rel.startsWith("./")) rel = rel.substring(2)
+        remote.pathEntries(cwd.trimEnd('/') + "/" + rel).asSequence()
+            .filter { it.startsWith(base) && it != base }
+            .filter { base.startsWith(".") || !it.startsWith(".") }
+            .filter { files != ArgKind.DIRECTORY || it.endsWith("/") }
+            .take(6)
+            .forEach { entry ->
+                val tail = shellEscape(entry.substring(base.length))
+                offer(out, Suggestion(entry, base.length, tail + if (entry.endsWith("/")) "" else " "))
+            }
+    }
+
+    /** Backslash the characters a shell would otherwise split or expand on. */
+    private fun shellEscape(s: String): String =
+        if (s.none { it in ESCAPE }) s
+        else buildString { s.forEach { if (it in ESCAPE) append('\\'); append(it) } }
 
     private fun historyMatches(
         history: List<String>,
@@ -175,15 +231,19 @@ object Completer {
 
     // ---- later tokens: subcommands, flags, live argument values --------------------
 
-    /** Offers completions and returns the dynamic [ArgKind] governing this position
-     *  (a flag awaiting its value, or a dynamic positional), or null. */
+    /** Offers completions and returns the [Position]: the dynamic [ArgKind] governing
+     *  it (a flag awaiting its value, or a dynamic positional) and the files it takes. */
     private fun completeArguments(
         complete: List<String>,
         partial: String,
         remote: RemoteContext?,
+        cwd: String?,
         out: MutableMap<String, Suggestion>,
-    ): ArgKind? {
-        var spec = Specs.all[complete.first()] ?: return null
+    ): Position {
+        // No grammar: the shell's own default is that arguments are files — except
+        // for the handful of everyday commands whose arguments plainly aren't.
+        var spec = Specs.all[complete.first()]
+            ?: return Position(null, if (complete.first() in NOT_FILES) ArgKind.NONE else ArgKind.PATH)
         var argKind = spec.argKind
         var pendingFlagKind: ArgKind? = null
 
@@ -204,12 +264,13 @@ object Completer {
             ?: listOfNotNull(argKind.takeIf { it != ArgKind.NONE })
 
         for (kind in kinds) {
+            if (kind.isPath) continue // listings, not values: completeRelative's job
             // `user@host`: the user half is the traveller's own — match host names
             // past the @ and keep the prefix in the offer.
             val at = if (kind == ArgKind.SSH_HOST) partial.lastIndexOf('@') else -1
             val user = if (at >= 0) partial.substring(0, at + 1) else ""
             val base = if (at >= 0) partial.substring(at + 1) else partial
-            remote?.args(kind).orEmpty().asSequence()
+            remote?.args(kind, cwd).orEmpty().asSequence()
                 .filter { it.startsWith(base) && it != base }
                 .take(4)
                 .forEach {
@@ -217,7 +278,8 @@ object Completer {
                 }
         }
         val governing = kinds.firstOrNull()
-        if (pendingFlagKind != null) return governing // value position: only values make sense
+        // Value position: only values make sense — files only if the flag takes one.
+        pendingFlagKind?.let { return Position(governing, it.takeIf { k -> k.isPath } ?: ArgKind.NONE) }
 
         spec.subs.asSequence()
             .map { it.name }
@@ -228,7 +290,7 @@ object Completer {
                 .filter { it.startsWith(partial) && it != partial }
                 .forEach { offer(out, token(it, partial)) }
         }
-        return governing
+        return Position(governing, spec.paths.takeIf { it.isPath } ?: argKind.takeIf { it.isPath } ?: ArgKind.NONE)
     }
 
     private fun offer(out: MutableMap<String, Suggestion>, s: Suggestion) {
@@ -242,4 +304,22 @@ object Completer {
     private val WS = Regex("\\s+")
     private val CONNECTOR = Regex("\\|\\||&&|[|;]")
     private val ASSIGN = Regex("[A-Za-z_][A-Za-z0-9_]*\\+?=.*")
+
+    /** A token carrying any of these is not a literal file name yet — the shell
+     *  will unquote, expand or split it first (or it names another host's file). */
+    private const val NOT_LITERAL = "'\"\\\$`*?[{=:"
+
+    /** What a completed name must have backslashed to stay one shell word. */
+    private const val ESCAPE = " \t'\"\\\$`!&;|<>()*?[]{}#"
+
+    /** Everyday commands with no spec whose arguments are plainly not files: a bare
+     *  word after them is a name, a pid, a word — never a probe of the cwd. */
+    private val NOT_FILES = setOf(
+        "man", "which", "whatis", "apropos", "type", "command", "help", "alias", "unalias",
+        "export", "unset", "echo", "printf", "killall", "pkill", "pgrep", "pidof", "sleep",
+        "whoami", "hostname", "uptime", "date", "id", "groups", "passwd", "su", "history",
+        "exit", "logout", "clear", "reset", "jobs", "fg", "bg", "disown", "wait", "host",
+        "dig", "nslookup", "ps", "top", "htop", "uname", "service", "useradd", "userdel",
+        "usermod", "groupadd",
+    )
 }

@@ -125,6 +125,11 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
   autocomplete (feeds the existing `autocomplete/` engine), and — the big one — **the horn**
   (Tier 4). Requires shipping shell-integration snippets users source on the host (Charon can
   offer to install them over the exec channel, same courier pattern as `ssh-copy-id`).
+  > **Status:** OSC 133 `D`/`C` feed the horn; **OSC 7 cwd → cwd-aware autocomplete
+  > SHIPPED** — relative paths in file positions and git branch names complete from
+  > where the shell stands (`docs/INPUT.md` §2b item 5; rig + tmux notes in
+  > `docs/HORN.md`). Still to come: `A`/`B` prompt marks → prompt-to-prompt jump and
+  > the gutter glyph, and Charon installing the rig itself over the exec channel.
 - **XTVERSION / kitty query / DECRQSS** so remote programs *detect* Charon and light up their
   fancy paths. Without this, `kitten icat` won't even try to send an image.
   > **Status: XTVERSION shipped in v1.1** (`DCS >| Charon(<version>) ST`); the kitty keyboard
