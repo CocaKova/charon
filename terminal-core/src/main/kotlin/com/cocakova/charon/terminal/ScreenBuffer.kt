@@ -144,6 +144,7 @@ class ScreenBuffer(
         val pull = minOf(extra, resizeDebt, scrollback.size)
         val pulled = ArrayList<Line>(pull)
         repeat(pull) { pulled.add(0, scrollback.removeLast()) }
+        linesPushed -= pull
         resizeDebt -= pull
         val old = lines
         lines = Array(newRows) { i ->
@@ -173,7 +174,16 @@ class ScreenBuffer(
         for (r in 0 until rows) action(line(r))
     }
 
+    /**
+     * Lines ever pushed over the top (less any a grow pulled back). A line's
+     * selection-space row plus this is its lasting number: it doesn't move when
+     * output scrolls the grid, which is what keeps a search hit on its words.
+     */
+    var linesPushed: Long = 0L
+        private set
+
     private fun pushScrollback(line: Line) {
+        linesPushed++
         scrollback.addLast(line)
         while (scrollback.size > maxScrollback) scrollback.removeFirst()
     }

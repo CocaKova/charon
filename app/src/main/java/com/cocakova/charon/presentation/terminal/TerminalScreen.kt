@@ -1,5 +1,13 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import android.content.Context
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -156,21 +164,47 @@ fun TerminalScreen(
     // A marked passage (OSC 8 link) under the finger: the confirm sheet's subject.
     var linkSighting by remember(session.id) { mutableStateOf<LinkSighting?>(null) }
     // Dredge the wake: search over scrollback + live grid. One query, one current
-    // hit; nav walks the sightings and pins the glass on each. Recomputed off the
-    // query and the cursor — cheap for a 10k-line scrollback, and output between
-    // keystrokes only shifts rows by the evicted count, which the wash tolerates.
+    // hit; nav walks the sightings and pins the glass on each. The lock is held only
+    // to copy the text; the scan runs on a worker. While the bar is open the dredge
+    // refreshes as output lands (at most a few times a second), the eye staying on
+    // its words; a fresh query starts at the newest sighting.
     var dredge by remember(session.id) { mutableStateOf("") }
-    var dredgeAt by remember(session.id) { mutableStateOf(0) }
+    var dredgePattern by remember(session.id) { mutableStateOf(false) }
     var dredgeFocused by remember(session.id) { mutableStateOf(false) }
-    val searchState by remember(session.id, dredge, dredgeAt) {
-        mutableStateOf(
-            if (dredge.isBlank()) null
-            else synchronized(session.lock) {
-                val hits = SearchEngine.find(session.term.screen, dredge)
-                if (hits.isEmpty()) null
-                else SearchEngine.SearchState(hits, dredgeAt.coerceIn(0, hits.size - 1))
-            },
-        )
+    var dredgeError by remember(session.id) { mutableStateOf<String?>(null) }
+    var searchState by remember(session.id) { mutableStateOf<SearchEngine.SearchState?>(null) }
+    fun showHit(hit: SearchEngine.Hit) {
+        val row = synchronized(session.lock) { hit.row(session.term.screen.linesPushed) }
+        // A hit already on the glass stays where it is; otherwise it lands a little
+        // below the top, with a line or two of what led up to it.
+        val top = -session.scrollOffset.value
+        if (row < top || row >= top + session.term.rows) session.jumpToRow(row - 2)
+    }
+    LaunchedEffect(session.id, dredge, dredgePattern) {
+        searchState = null
+        if (dredge.isEmpty()) {
+            dredgeError = null
+            return@LaunchedEffect
+        }
+        val matcher = SearchEngine.compile(dredge, dredgePattern)
+        if (matcher == null) {
+            dredgeError = "that pattern doesn't parse"
+            return@LaunchedEffect
+        }
+        dredgeError = null
+        var first = true
+        session.outputTick.collect { // a StateFlow: a slow collector sees only the latest tick
+            val hits = withContext(Dispatchers.Default) {
+                val snap = synchronized(session.lock) { SearchEngine.snapshot(session.term.screen) }
+                SearchEngine.find(snap, matcher)
+            }
+            val prev = searchState
+            val current = if (first || prev == null) hits.lastIndex else SearchEngine.follow(prev, hits)
+            searchState = if (hits.isEmpty()) null else SearchEngine.SearchState(hits, current)
+            if (first) hits.getOrNull(current)?.let { showHit(it) }
+            first = false
+            delay(DREDGE_REFRESH_MS)
+        }
     }
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences("charon", Context.MODE_PRIVATE) }
@@ -566,17 +600,20 @@ fun TerminalScreen(
                 DredgeBar(
                     modifier = Modifier.align(Alignment.TopCenter),
                     query = dredge,
-                    hits = searchState?.hits?.size ?: if (dredge.isBlank()) 0 else 0,
+                    pattern = dredgePattern,
+                    error = dredgeError,
+                    hits = searchState?.hits?.size ?: 0,
                     current = (searchState?.current ?: -1) + 1,
-                    onQuery = { dredge = it; dredgeAt = 0; dredgeFocused = true },
+                    onQuery = { dredge = it; dredgeFocused = true },
+                    onPattern = { dredgePattern = !dredgePattern },
                     onStep = { dir ->
-                        val total = searchState?.hits?.size ?: 0
-                        if (total == 0) return@DredgeBar
-                        val next = ((dredgeAt + dir) % total + total) % total
-                        dredgeAt = next
-                        searchState?.hits?.getOrNull(next)?.let { session.jumpToRow(it.row) }
+                        val state = searchState ?: return@DredgeBar
+                        val total = state.hits.size
+                        val next = ((state.current + dir) % total + total) % total
+                        searchState = state.copy(current = next)
+                        showHit(state.hits[next])
                     },
-                    onClose = { dredge = ""; dredgeAt = 0; dredgeFocused = false; session.scrollToBottom() },
+                    onClose = { dredge = ""; dredgeFocused = false; session.scrollToBottom() },
                 )
             }
 
@@ -1201,9 +1238,12 @@ private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
 @Composable
 private fun DredgeBar(
     query: String,
+    pattern: Boolean,
+    error: String?,
     hits: Int,
     current: Int,
     onQuery: (String) -> Unit,
+    onPattern: () -> Unit,
     onStep: (Int) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1222,45 +1262,87 @@ private fun DredgeBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedTextField(
+            // The livery's own field: a dark slip of water with a teal rim and caret,
+            // the query in the terminal's mono — not a stock form field.
+            BasicTextField(
                 value = query,
                 onValueChange = onQuery,
                 singleLine = true,
-                placeholder = { Text("dredge the wake", color = Styx.mist) },
-                modifier = Modifier.weight(1f).focusRequester(focus),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = CharonMono,
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(Styx.water),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, autoCorrectEnabled = false),
+                keyboardActions = KeyboardActions(onSearch = { onStep(-1) }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focus)
+                    .semantics { contentDescription = "dredge the wake: search the scrollback" },
+                decorationBox = { inner ->
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (error != null) Styx.ember else Styx.water.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                    ) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "dredge the wake",
+                                fontFamily = CharonMono,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Styx.mist,
+                            )
+                        }
+                        inner()
+                    }
+                },
             )
-            DredgePill("▲") { onStep(-1) }
-            DredgePill("▼") { onStep(1) }
-            DredgePill("✕") { onClose() }
+            DredgePill(".*", "pattern search ${if (pattern) "on" else "off"}", lit = pattern) { onPattern() }
+            DredgePill("▲", "older sighting") { onStep(-1) }
+            DredgePill("▼", "newer sighting") { onStep(1) }
+            DredgePill("✕", "close the dredge") { onClose() }
         }
         Spacer(Modifier.height(4.dp))
         Text(
             when {
-                query.isBlank() || hits == 0 -> "no sightings"
-                else -> "$hits · $current"
+                error != null -> error
+                query.isEmpty() || hits == 0 -> "no sightings"
+                hits >= SearchEngine.MAX_HITS -> "$current of ${hits}+"
+                else -> "$current of $hits"
             },
             fontFamily = CharonMono,
             style = MaterialTheme.typography.labelMedium,
-            color = if (hits > 0) Styx.water else Styx.mist,
+            color = when {
+                error != null -> Styx.ember
+                hits > 0 -> Styx.water
+                else -> Styx.mist
+            },
         )
     }
 }
 
-/** One pill of the dredge bar. */
+/** One pill of the dredge bar; [lit] = false draws it hollow (a toggle that's off). */
 @Composable
-private fun DredgePill(label: String, onClick: () -> Unit) {
+private fun DredgePill(label: String, description: String, lit: Boolean = true, onClick: () -> Unit) {
     Text(
         label,
         fontFamily = CharonMono,
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.background,
+        color = if (lit) MaterialTheme.colorScheme.background else Styx.water,
         modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(Styx.water)
-            .clickable { onClick() }
+            .background(if (lit) Styx.water else Color.Transparent)
+            .border(1.dp, Styx.water, RoundedCornerShape(20.dp))
+            .clickable(onClickLabel = description) { onClick() }
+            .semantics { contentDescription = description }
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
+
+/** How often an open dredge re-reads the water while output lands. */
+private const val DREDGE_REFRESH_MS = 300L
 
 /**
  * The lading strip: while a package manager is hauling, a laden barge crosses a

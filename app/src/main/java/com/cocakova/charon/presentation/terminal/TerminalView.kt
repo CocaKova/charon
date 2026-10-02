@@ -797,15 +797,22 @@ private fun drawSearchHits(
 ) {
     val firstVisible = -scrollOffset
     val lastVisible = term.rows - 1 - scrollOffset
+    // Hits name their lines by lasting number; today's push count maps them onto
+    // rows, so the wash stays on its words between refreshes while output scrolls.
+    val pushed = term.screen.linesPushed
     p.fill.alpha = 84
     for ((i, hit) in search.hits.withIndex()) {
-        if (hit.row < firstVisible || hit.row > lastVisible) continue
-        val viewRow = hit.row + scrollOffset
-        val left = hit.start * cw
-        val right = (hit.end + 1) * cw
-        val top = viewRow * ch
+        val firstRow = hit.row(pushed)
+        val lastRow = (hit.endLine - pushed).toInt()
+        if (lastRow < firstVisible || firstRow > lastVisible) continue
         p.fill.color = if (i == search.current) SEARCH_GOLD else SEARCH_TEAL
-        canvas.drawRect(left, top, right, top + ch, p.fill)
+        // A hit the grid wrapped runs to the row's end, then on from the next row's start.
+        for (row in maxOf(firstRow, firstVisible)..minOf(lastRow, lastVisible)) {
+            val from = if (row == firstRow) hit.start else 0
+            val to = if (row == lastRow) hit.end else term.cols - 1
+            val top = (row + scrollOffset) * ch
+            canvas.drawRect(from * cw, top, (to + 1) * cw, top + ch, p.fill)
+        }
     }
     p.fill.alpha = 255
 }
