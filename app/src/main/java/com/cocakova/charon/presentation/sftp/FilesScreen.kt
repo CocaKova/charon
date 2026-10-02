@@ -93,6 +93,8 @@ fun FilesScreen(
     openSftp: () -> SftpChannel?,
     transfers: SftpTransfers,
     onBack: () -> Unit,
+    /** Open here instead of home (a tapped file:// path, the shell's cwd); a file opens its folder. */
+    startPath: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -129,7 +131,8 @@ fun FilesScreen(
                 loading = false
             } else {
                 channel = ch
-                dir = runCatching { ch.home() }.getOrElse { "/" }
+                dir = startPath?.takeIf { it.startsWith("/") }?.let { landingDir(ch, it) }
+                    ?: runCatching { ch.home() }.getOrElse { "/" }
             }
         }
     }
@@ -726,4 +729,11 @@ internal fun humanBytes(bytes: Long): String = when {
     bytes < 1024 * 1024 -> "%.1fK".format(bytes / 1024.0)
     bytes < 1024L * 1024 * 1024 -> "%.1fM".format(bytes / (1024.0 * 1024))
     else -> "%.2fG".format(bytes / (1024.0 * 1024 * 1024))
+}
+
+/** Where a start path lands: itself when it's a folder, its folder when it's a file, null when it's gone. */
+private fun landingDir(ch: SftpChannel, path: String): String? {
+    val clean = path.trimEnd('/').ifEmpty { "/" }
+    return runCatching { ch.list(clean); clean }.getOrNull()
+        ?: clean.substringBeforeLast('/', "").ifEmpty { "/" }.takeIf { parent -> runCatching { ch.list(parent) }.isSuccess }
 }

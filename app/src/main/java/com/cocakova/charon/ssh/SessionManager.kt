@@ -360,6 +360,27 @@ class SessionManager(
         }
     }
 
+    /**
+     * A link to the far shore's localhost, carried here: an L channel from this
+     * phone's same port when it's free (dev servers that check their own origin
+     * stay happy), any free port otherwise. One channel per target, reused on a
+     * second tap; it lives as long as the crossing and is never saved.
+     */
+    suspend fun forwardLink(sessionId: String, targetHost: String, targetPort: Int): Result<Int> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val ms = managed[sessionId] ?: error("the crossing is gone")
+                val conn = ms.connection ?: error("the crossing isn't up")
+                val key = "link:$targetHost:$targetPort"
+                ms.forwards[key]?.let { open -> return@runCatching open.boundPort }
+                val handle = runCatching { conn.startForward("L", targetPort, targetHost, targetPort) }
+                    .getOrElse { conn.startForward("L", 0, targetHost, targetPort) }
+                ms.forwards[key] = handle
+                publishForwards()
+                handle.boundPort.takeIf { it > 0 } ?: targetPort
+            }
+        }
+
     /** Chart every autoStart channel of this crossing's host. Runs post-connect. */
     private suspend fun autoStartForwards(ms: Managed) {
         val hostId = ms.hostId ?: return

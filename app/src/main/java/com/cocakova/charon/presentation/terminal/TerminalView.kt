@@ -51,6 +51,7 @@ import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.SearchEngine
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
+import com.cocakova.charon.terminal.UrlScanner
 
 /**
  * The grid renderer: run-batched `nativeCanvas.drawText` with cached Paints, frame-
@@ -222,10 +223,18 @@ fun TerminalView(
         val term = session.term
         val v = viewCellOf(pos)
         val line = term.screen.viewLine(session.scrollOffset.value, v.row)
-        if (line.ext == null) return@synchronized null
         val col = v.col.coerceAtMost(line.cols - 1)
-        val id = CellExt.linkId(line.extAt(col))
-        if (id == 0) return@synchronized null
+        val id = if (line.ext == null) 0 else CellExt.linkId(line.extAt(col))
+        if (id == 0) {
+            // No mark: a URL printed as plain text, read across soft wraps.
+            val selRow = v.row - session.scrollOffset.value
+            val screen = term.screen
+            val plain = UrlScanner.linkAt(
+                { r -> if (r >= -screen.scrollbackSize && r < term.rows) screen.relativeLine(r) else null },
+                selRow, col,
+            ) ?: return@synchronized null
+            return@synchronized LinkSighting(plain.url, 0, plain.url, TextSelection.Cell(selRow, col))
+        }
         val uri = term.hyperlinks.uri(id) ?: return@synchronized null
         var from = col
         while (from > 0 && CellExt.linkId(line.extAt(from - 1)) == id) from--

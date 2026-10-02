@@ -299,9 +299,13 @@ class SshjEngine : SshEngine {
                 ): ForwardHandle = when (type) {
                     "L" -> {
                         // Phone listens; each accepted socket rides a direct-tcpip channel.
-                        val ss = ServerSocket().apply {
-                            reuseAddress = true
-                            bind(InetSocketAddress("127.0.0.1", bindPort))
+                        val ss = ServerSocket()
+                        try {
+                            ss.reuseAddress = true
+                            ss.bind(InetSocketAddress("127.0.0.1", bindPort))
+                        } catch (e: Exception) {
+                            runCatching { ss.close() }
+                            throw e
                         }
                         val forwarder = client.newLocalPortForwarder(
                             Parameters("127.0.0.1", bindPort, targetHost, targetPort),
@@ -311,6 +315,7 @@ class SshjEngine : SshEngine {
                             runCatching { forwarder.listen() }
                         }
                         object : ForwardHandle {
+                            override val boundPort: Int = ss.localPort
                             override fun stop() {
                                 runCatching { ss.close() }
                             }

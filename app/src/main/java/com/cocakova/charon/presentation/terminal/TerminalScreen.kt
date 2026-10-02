@@ -125,6 +125,10 @@ fun TerminalScreen(
     onToggleForward: (PortForwardEntity) -> Unit,
     onSaveForward: (PortForwardEntity) -> Unit,
     onDeleteForward: (String) -> Unit,
+    /** Carry the far shore's localhost:port here (a tapped dev-server link); the phone's port. */
+    onForwardLink: suspend (String, Int) -> Result<Int> = { _, _ -> Result.failure(IllegalStateException("no crossing")) },
+    /** Open the hold at a far-shore path (a tapped file:// link). */
+    onFilesAt: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by session.state.collectAsState()
@@ -490,6 +494,7 @@ fun TerminalScreen(
             // A link from the far shore is untrusted: never opened on a tap alone.
             // The sheet shows where it really leads, then open / copy / select.
             linkSighting?.let { link ->
+                val live = state is TerminalSession.State.Connected
                 LinkSheet(
                     sighting = link,
                     onSelectWords = { cell ->
@@ -497,6 +502,8 @@ fun TerminalScreen(
                         session.selectWordAt(cell)
                     },
                     onDismiss = { linkSighting = null },
+                    onForwardLocal = if (live) onForwardLink else null,
+                    onOpenHold = if (live) onFilesAt else null,
                 )
             }
 

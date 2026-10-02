@@ -185,6 +185,8 @@ private fun CharonRoot(
     // hold (SFTP) for one session; it clears itself if that session closes.
     val showTerminal = current != null
     var filesFor by remember { mutableStateOf<String?>(null) }
+    // Where the hold opens: a tapped file:// path, else the shell's own cwd, else home.
+    var filesPath by remember { mutableStateOf<String?>(null) }
     var incomingHail by remember { mutableStateOf<HailTarget?>(null) }
 
     // Asks from outside the Dock (a link, a shortcut, the tile, a horn), one at a time.
@@ -252,6 +254,7 @@ private fun CharonRoot(
             FilesScreen(
                 sessionLabel = sessionManager.labelFor(id) ?: "",
                 openSftp = { sessionManager.openSftp(id) },
+                startPath = filesPath,
                 transfers = transfers,
                 onBack = { filesFor = null },
             )
@@ -272,12 +275,14 @@ private fun CharonRoot(
                 onReconnect = { sessionManager.forceReconnect(it) },
                 onNewSession = { sessionManager.showDock() },
                 onDock = { sessionManager.showDock() },
-                onFiles = { filesFor = current.id },
+                onFiles = { filesPath = null; filesFor = current.id },
                 onSaveSnippet = { s -> scope.launch { snippetDao.upsert(s) } },
                 onDeleteSnippet = { id -> scope.launch { snippetDao.delete(id) } },
                 onToggleForward = { fwd -> sessionManager.toggleForward(current.id, fwd) },
                 onSaveForward = { fwd -> scope.launch { portForwardDao.upsert(fwd) } },
                 onDeleteForward = { id -> scope.launch { portForwardDao.delete(id) } },
+                onForwardLink = { host, port -> sessionManager.forwardLink(current.id, host, port) },
+                onFilesAt = { path -> filesPath = path; filesFor = current.id },
             )
         } else {
             DockScreen(

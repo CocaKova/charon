@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.theme.Styx
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * A marked passage under the finger: the OSC 8 link a tapped cell carries.
@@ -81,6 +83,69 @@ object LinkPolicy {
         return host.takeIf { it.isNotEmpty() && it != "[]" }
     }
 
+    /**
+     * A web link to the far shore's own loopback (`npm run dev`'s localhost:5173):
+     * the host to dial from over there and the port, else null. Such a link means
+     * nothing on the phone until a channel carries it across.
+     */
+    fun loopback(uri: String): Pair<String, Int>? {
+        val scheme = scheme(uri) ?: return null
+        val host = host(uri) ?: return null
+        val target = when (host.lowercase(Locale.ROOT)) {
+            "localhost", "0.0.0.0" -> "localhost"
+            "[::1]" -> "::1"
+            else -> host.takeIf { it.startsWith("127.") && it.count { c -> c == '.' } == 3 } ?: return null
+        }
+        val authority = uri.substring(scheme.length + 3).takeWhile { it != '/' && it != '?' && it != '#' }
+            .substringAfterLast('@')
+        val portText = if (authority.startsWith("[")) authority.substringAfter("]", "").removePrefix(":")
+        else authority.substringAfter(':', "")
+        val port = when {
+            portText.isNotEmpty() -> portText.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+            scheme == "https" -> 443
+            else -> 80
+        }
+        return target to port
+    }
+
+    /** [uri] pointed at this phone's own localhost:[port], path and query kept. */
+    fun onPhone(uri: String, port: Int): String {
+        val scheme = scheme(uri) ?: return uri
+        val afterSlashes = uri.substring(scheme.length + 3)
+        val authorityEnd = afterSlashes.indexOfFirst { it == '/' || it == '?' || it == '#' }
+            .let { if (it < 0) afterSlashes.length else it }
+        return "$scheme://localhost:$port" + afterSlashes.substring(authorityEnd)
+    }
+
+    /** The path a `file://` link names (`ls --hyperlink` writes file://host/path), decoded. */
+    fun filePath(uri: String): String? {
+        if (scheme(uri) != "file") return null
+        val rest = uri.substring("file:".length)
+        val path = when {
+            rest.startsWith("//") -> rest.substring(2).let { a -> a.indexOf('/').let { if (it < 0) return null else a.substring(it) } }
+            rest.startsWith("/") -> rest
+            else -> return null
+        }.substringBefore('#').substringBefore('?')
+        return percentDecode(path)?.takeIf { it.startsWith("/") && it.none { c -> c.isISOControl() } }
+    }
+
+    private fun percentDecode(s: String): String? {
+        if ('%' !in s) return s
+        val out = java.io.ByteArrayOutputStream()
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '%') {
+                if (i + 2 >= s.length) return null
+                val b = s.substring(i + 1, i + 3).toIntOrNull(16) ?: return null
+                out.write(b); i += 3
+            } else {
+                out.write(c.toString().toByteArray(Charsets.UTF_8)); i++
+            }
+        }
+        return out.toString(Charsets.UTF_8.name())
+    }
+
     /** True when [uri] may be handed to ACTION_VIEW. */
     fun opens(uri: String): Boolean {
         if (uri.any { it.isISOControl() || it.isWhitespace() }) return false
@@ -105,17 +170,38 @@ fun LinkSheet(
     sighting: LinkSighting,
     onSelectWords: (TextSelection.Cell) -> Unit,
     onDismiss: () -> Unit,
+    /** Carry the far shore's localhost:port to this phone; the phone's port, or why not. Null = no live crossing. */
+    onForwardLocal: (suspend (host: String, port: Int) -> Result<Int>)? = null,
+    /** Open the hold (SFTP) at a path on the far shore. Null = no crossing to open it on. */
+    onOpenHold: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val opens = remember(sighting.uri) { LinkPolicy.opens(sighting.uri) }
     val host = remember(sighting.uri) { LinkPolicy.host(sighting.uri) }
     var note by remember(sighting.uri) { mutableStateOf<String?>(null) }
+    val loopback = remember(sighting.uri) { LinkPolicy.loopback(sighting.uri) }
+    val holdPath = remember(sighting.uri) { LinkPolicy.filePath(sighting.uri) }
+    val scope = rememberCoroutineScope()
+    var carrying by remember(sighting.uri) { mutableStateOf(false) }
+
+    fun openOutward(uri: String) {
+        try {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addCategory(Intent.CATEGORY_BROWSABLE),
+            )
+            onDismiss()
+        } catch (_: ActivityNotFoundException) {
+            note = "no app aboard can open this"
+        } catch (_: SecurityException) {
+            note = "no app aboard can open this"
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text(
-                "a marked passage",
+                if (sighting.linkId == 0) "a passage in plain sight" else "a marked passage",
                 style = MaterialTheme.typography.titleMedium,
                 color = Styx.water,
             )
@@ -148,7 +234,22 @@ fun LinkSheet(
                     color = Styx.water,
                 )
             }
-            if (!opens) {
+            if (loopback != null && onForwardLocal != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "this localhost is the far shore's — Charon can carry port ${loopback.second} across " +
+                        "to this phone and open it here",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Styx.mist,
+                )
+            } else if (holdPath != null && onOpenHold != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "a path on the far shore — open the hold there",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Styx.mist,
+                )
+            } else if (!opens) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "only web and mail links open from the terminal — this one can be copied",
@@ -170,23 +271,30 @@ fun LinkSheet(
                     clipboard.setText(AnnotatedString(sighting.uri))
                     onDismiss()
                 }) { Text("copy", color = Styx.water) }
-                if (opens) {
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            try {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(sighting.uri))
-                                        .addCategory(Intent.CATEGORY_BROWSABLE),
-                                )
-                                onDismiss()
-                            } catch (_: ActivityNotFoundException) {
-                                note = "no app aboard can open this"
-                            } catch (_: SecurityException) {
-                                note = "no app aboard can open this"
-                            }
-                        },
-                    ) { Text("open") }
+                when {
+                    loopback != null && onForwardLocal != null -> {
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                carrying = true
+                                scope.launch {
+                                    onForwardLocal(loopback.first, loopback.second)
+                                        .onSuccess { phonePort -> openOutward(LinkPolicy.onPhone(sighting.uri, phonePort)) }
+                                        .onFailure { note = it.message ?: "the channel could not be charted" }
+                                    carrying = false
+                                }
+                            },
+                            enabled = !carrying,
+                        ) { Text(if (carrying) "carrying…" else "carry & open") }
+                    }
+                    holdPath != null && onOpenHold != null -> {
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { onOpenHold(holdPath); onDismiss() }) { Text("open the hold") }
+                    }
+                    opens -> {
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { openOutward(sighting.uri) }) { Text("open") }
+                    }
                 }
             }
         }

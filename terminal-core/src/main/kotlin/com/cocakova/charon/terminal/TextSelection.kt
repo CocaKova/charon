@@ -66,6 +66,8 @@ object TextSelection {
     private fun isWordChar(cp: Int): Boolean {
         if (cp <= 0x20) return false
         val ch = cp.toChar()
-        return Character.isLetterOrDigit(cp) || ch in "_-./~@:+"
+        // ?=&#% keep a URL's query and fragment whole (a long-press on
+        // `https://x/?a=1&b=2#top` takes all of it, not just the path).
+        return Character.isLetterOrDigit(cp) || ch in "_-./~@:+?=&#%"
     }
 }

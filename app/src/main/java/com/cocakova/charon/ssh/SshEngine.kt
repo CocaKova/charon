@@ -100,6 +100,9 @@ interface SshConnection {
 /** One charted channel, running until stopped (or the transport under it dies). */
 interface ForwardHandle {
     fun stop()
+
+    /** The port actually bound on this side (an L channel asked for 0 gets one); 0 = not known. */
+    val boundPort: Int get() = 0
 }
 
 data class ConnectConfig(
