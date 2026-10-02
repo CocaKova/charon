@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.dock
 
+import com.cocakova.charon.theme.Hulls
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -385,7 +386,7 @@ fun SettingsSheet(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(Hulls.card)
                     .clickable(onClick = onReliquary)
                     .padding(vertical = 10.dp, horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -423,17 +424,17 @@ private fun LiverySwatch(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Hulls.card)
             .clickable(onClick = onClick)
             .padding(2.dp),
     ) {
         Column(
             Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Hulls.chip)
                 .border(
                     width = if (selected) 2.dp else 1.dp,
                     color = if (selected) Styx.water else MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = Hulls.chip,
                 )
                 .background(c(scheme.bg))
                 .padding(horizontal = 10.dp, vertical = 8.dp),

@@ -1,5 +1,8 @@
 package com.cocakova.charon.presentation.dock
 
+import com.cocakova.charon.theme.NightPalette
+import com.cocakova.charon.theme.LocalCharonPalette
+import com.cocakova.charon.theme.Hulls
 import android.text.format.DateUtils
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,7 +38,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
@@ -100,6 +103,10 @@ fun DockScreen(
     onResumeSession: (String) -> Unit,
     connecting: Boolean,
     arrivals: Int,
+    /** A trust or challenge prompt is up during the crossing: the boat holds mid-river. */
+    holding: Boolean = false,
+    /** Call back a crossing that hasn't landed yet. */
+    onTurnBack: () -> Unit = {},
     error: String?,
     onConnect: (HostEntity) -> Unit,
     onQuickConnect: (HostDraft) -> Unit,
@@ -222,20 +229,29 @@ fun DockScreen(
                     tint = MaterialTheme.colorScheme.primary)
             }
         }
-        Text(
-            when {
-                connecting -> "crossing the river…"
-                ferryReturning -> "the ferry returns to shore"
-                else -> "the dock"
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    connecting && holding -> "holding mid-river — the gate has a question"
+                    connecting -> "crossing the river…"
+                    ferryReturning -> "the ferry returns to shore"
+                    else -> "the dock"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            // A crossing that won't land can always be called back.
+            if (connecting) {
+                TextButton(onClick = onTurnBack) { Text("turn back", color = Styx.mist) }
+            }
+        }
         Spacer(Modifier.height(12.dp))
         StyxCrossing(
             connecting = connecting,
             arrivals = arrivals,
+            holding = holding,
+            away = runningSessions.isNotEmpty() && !connecting,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
         )
         Spacer(Modifier.height(12.dp))
@@ -278,7 +294,7 @@ fun DockScreen(
                 leadingIcon = {
                     Icon(Icons.Outlined.Search, contentDescription = null, tint = Styx.mist)
                 },
-                shape = RoundedCornerShape(14.dp),
+                shape = Hulls.card,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp),
@@ -563,7 +579,7 @@ private fun RunningSessionsBar(
         sessions.forEach { s ->
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(Hulls.chip)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable { onResume(s.id) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -602,7 +618,7 @@ private fun HarborHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(Hulls.chip)
             .clickable(onClick = onToggle)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -657,7 +673,7 @@ private fun MooringCard(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val give by animateFloatAsState(if (pressed) 0.98f else 1f, tween(120), label = "give")
-    val cardShape = RoundedCornerShape(14.dp)
+    val cardShape = Hulls.card
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -692,7 +708,10 @@ private fun MooringCard(
         // The flicker reads the shared clock inside the draw phase only, at a phase
         // offset hashed from the host id, so every lantern burns to its own wind.
         val lantern = lanternColor(host.colorHex)
-        val flameCore = lerp(lantern, Color.White, 0.45f)
+        // By night the core burns toward white; on Daybreak's paper a white core reads
+        // as a hole, so it deepens toward ink instead.
+        val onPaper = LocalCharonPalette.current !== NightPalette
+        val flameCore = if (onPaper) lerp(lantern, Styx.bone, 0.40f) else lerp(lantern, Color.White, 0.45f)
         val reachable = sounding?.reach == Reach.REACHABLE
         val phase = remember(host.id) { (host.id.hashCode() and 0xFFFF) / 65535f * 6.2832f }
         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
@@ -770,8 +789,8 @@ private fun NewCrossingCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, Styx.waterDeep, RoundedCornerShape(12.dp))
+            .clip(Hulls.card)
+            .border(1.dp, Styx.waterDeep, Hulls.card)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -802,8 +821,8 @@ private fun ChartWatersCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            .clip(Hulls.card)
+            .border(1.dp, MaterialTheme.colorScheme.surfaceVariant, Hulls.card)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

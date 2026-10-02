@@ -23,4 +23,11 @@ val CharonTypography = Typography(
     labelMedium = TextStyle(fontFamily = CharonMono, fontSize = 12.sp),
     titleLarge = TextStyle(fontFamily = CharonMono, fontSize = 22.sp, letterSpacing = 6.sp),
     titleMedium = TextStyle(fontFamily = CharonMono, fontSize = 16.sp, letterSpacing = 2.sp),
+    titleSmall = TextStyle(fontFamily = CharonMono, fontSize = 14.sp, letterSpacing = 1.sp),
+    headlineSmall = TextStyle(fontFamily = CharonMono, fontSize = 20.sp),
+    // "underway" and every other small label: the mono, never Roboto's fallback.
+    labelSmall = TextStyle(fontFamily = CharonMono, fontSize = 11.sp, letterSpacing = 0.5.sp),
 )
+
+/** A scroll read in the hold: the mono at reading size, with room between lines. */
+val ScrollText = TextStyle(fontFamily = CharonMono, fontSize = 12.sp, lineHeight = 18.sp)

@@ -216,6 +216,9 @@ class TerminalSession(
         if (next != scrollOffset.value) scrollOffset.value = next
     }
 
+    /** Rows of history above the glass right now. */
+    fun historySize(): Int = synchronized(lock) { term.screen.scrollbackSize }
+
     fun scrollToBottom() {
         if (scrollOffset.value != 0) scrollOffset.value = 0
     }

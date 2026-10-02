@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.dock
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -103,7 +103,7 @@ fun HornRigSheet(
                 SelectionContainer(
                     Modifier
                         .heightIn(max = 260.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(Hulls.card)
                         .background(MaterialTheme.colorScheme.surface)
                         .verticalScroll(rememberScrollState())
                         .horizontalScroll(rememberScrollState())
@@ -111,9 +111,7 @@ fun HornRigSheet(
                 ) {
                     Text(
                         HornRig.appended(s).trim('\n'),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
+                        style = MaterialTheme.typography.labelSmall.copy(lineHeight = 15.sp),
                         color = Styx.water,
                     )
                 }

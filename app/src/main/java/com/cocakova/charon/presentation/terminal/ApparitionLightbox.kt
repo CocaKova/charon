@@ -1,5 +1,7 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.material3.MaterialTheme
+import com.cocakova.charon.theme.Hulls
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,7 +67,12 @@ fun ApparitionLightbox(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    val bitmap = remember(image) { cache.bitmapFor(image) }
+    // Decoded off the main thread (a big shade takes a moment); null until it lands.
+    var decoded by remember(image) { mutableStateOf(false) }
+    val bitmap by androidx.compose.runtime.produceState<android.graphics.Bitmap?>(null, image) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cache.bitmapNow(image) }
+        decoded = true
+    }
     var note by remember { mutableStateOf<String?>(null) }
 
     var scale by remember { mutableFloatStateOf(1f) }
@@ -133,16 +139,22 @@ fun ApparitionLightbox(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            if (bitmap == null) {
+            val shade = bitmap
+            if (shade == null && !decoded) {
+                com.cocakova.charon.presentation.components.BrailleSpinner(
+                    color = Styx.water,
+                    style = MaterialTheme.typography.headlineSmall,
+                    label = "drawing the shade",
+                )
+            } else if (shade == null) {
                 Text(
                     "the shade would not hold its shape",
-                    fontFamily = CharonMono,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = Styx.mist,
                 )
             } else {
                 Image(
-                    bitmap = bitmap.asImageBitmap(),
+                    bitmap = shade.asImageBitmap(),
                     contentDescription = "an apparition from the terminal",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
@@ -166,8 +178,7 @@ fun ApparitionLightbox(
                 note?.let {
                     Text(
                         it,
-                        fontFamily = CharonMono,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         color = Styx.mist,
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
@@ -217,12 +228,11 @@ fun ApparitionLightbox(
 private fun LightboxAction(label: String, tint: Color, onClick: () -> Unit) {
     Text(
         label,
-        fontFamily = CharonMono,
-        fontSize = 13.sp,
+        style = MaterialTheme.typography.bodyMedium,
         fontWeight = FontWeight.Bold,
         color = Color.Black,
         modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(Hulls.pill)
             .background(tint)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),

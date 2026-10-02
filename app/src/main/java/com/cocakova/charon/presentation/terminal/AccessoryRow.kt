@@ -1,5 +1,9 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.layout.heightIn
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -21,7 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
@@ -346,22 +349,43 @@ private fun KeyPill(
         modifier = Modifier
             .padding(horizontal = 3.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .height(38.dp)
+            // At least 38dp, and taller when the system font is scaled up, so a
+            // large-text phone gets whole labels instead of clipped ones.
+            .heightIn(min = 38.dp)
             .widthIn(min = minWidth)
-            .clip(RoundedCornerShape(9.dp))
+            .clip(Hulls.chip)
             .background(container)
-            .then(modifier),
+            .then(modifier)
+            .semantics { contentDescription = spokenKey(label) },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            fontFamily = CharonMono,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
             color = content,
+            maxLines = 1,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
         )
     }
+}
+
+/** What a screen reader says for a key: glyphs named, words as they are. */
+internal fun spokenKey(label: String): String = when (label) {
+    "←" -> "left arrow"
+    "→" -> "right arrow"
+    "↑" -> "up arrow"
+    "↓" -> "down arrow"
+    "⌕" -> "search the scrollback"
+    "|" -> "pipe"
+    "~" -> "tilde"
+    "/" -> "slash"
+    "-" -> "dash"
+    "esc" -> "escape"
+    "pgup" -> "page up"
+    "pgdn" -> "page down"
+    "fn" -> "function keys"
+    else -> label
 }
 
 /** Apply [block] to the modifier only when [cond]; keeps the builder readable. */

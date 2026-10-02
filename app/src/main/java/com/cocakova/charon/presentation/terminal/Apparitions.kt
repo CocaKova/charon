@@ -1,5 +1,7 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -22,23 +24,69 @@ import kotlin.math.roundToInt
  */
 class ApparitionCache(maxBytes: Int = DEFAULT_BITMAP_BUDGET) {
 
-    private class Entry(val source: Apparition, val bitmap: Bitmap)
+    private class Entry(val source: Apparition, val bitmap: Bitmap, val landedAt: Long)
 
     private val cache = object : LruCache<Long, Entry>(maxBytes) {
         override fun sizeOf(key: Long, value: Entry): Int = value.bitmap.byteCount
     }
 
-    /** The decoded bitmap for [image], or null if its bytes would not hold shape. */
-    fun bitmapFor(image: Apparition): Bitmap? {
+    /** Images whose bytes would not hold shape, by identity: never decoded twice. */
+    private val failed = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Apparition, Boolean>())
+
+    /** Images on the decoder's bench right now. */
+    private val inFlight = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Apparition, Boolean>())
+
+    /** Bumped when a decode lands, so the glass redraws to show it. Snapshot state. */
+    var landed by androidx.compose.runtime.mutableLongStateOf(0L)
+        private set
+
+    /** What the glass can show of an image right now. */
+    sealed interface Look {
+        data object Pending : Look
+        data object Failed : Look
+        class Ready(val bitmap: Bitmap, val landedAt: Long) : Look
+    }
+
+    /**
+     * The look of [image] for this frame — never a decode. Called from the draw under
+     * the session lock, so the work goes to the decoder thread and the frame draws a
+     * shimmer in its place; a corrupt payload is remembered as failed, not retried
+     * every frame.
+     */
+    fun lookFor(image: Apparition): Look {
         val hit = cache.get(image.id)
         // Identity, not equality: a re-transmitted id must not draw the old picture.
+        if (hit != null && hit.source === image) return Look.Ready(hit.bitmap, hit.landedAt)
+        synchronized(failed) { if (image in failed) return Look.Failed }
+        if (inFlight.add(image)) {
+            decoder.execute {
+                val decoded = decode(image)
+                if (decoded != null) {
+                    cache.put(image.id, Entry(image, decoded, System.nanoTime()))
+                } else {
+                    synchronized(failed) { failed += image }
+                }
+                inFlight.remove(image)
+                android.os.Handler(android.os.Looper.getMainLooper()).post { landed++ }
+            }
+        }
+        return Look.Pending
+    }
+
+    /** The decoded bitmap, decoding here if need be — for callers already off the main thread. */
+    fun bitmapNow(image: Apparition): Bitmap? {
+        val hit = cache.get(image.id)
         if (hit != null && hit.source === image) return hit.bitmap
-        val decoded = decode(image) ?: return null
-        cache.put(image.id, Entry(image, decoded))
+        synchronized(failed) { if (image in failed) return null }
+        val decoded = decode(image)
+        if (decoded != null) cache.put(image.id, Entry(image, decoded, 0L)) else synchronized(failed) { failed += image }
         return decoded
     }
 
-    fun clear() = cache.evictAll()
+    fun clear() {
+        cache.evictAll()
+        synchronized(failed) { failed.clear() }
+    }
 
     private fun decode(image: Apparition): Bitmap? = try {
         when (image.format) {
@@ -89,6 +137,11 @@ class ApparitionCache(maxBytes: Int = DEFAULT_BITMAP_BUDGET) {
     private companion object {
         const val DEFAULT_BITMAP_BUDGET = 48 * 1024 * 1024
         const val MAX_DECODED_EDGE = 2048
+
+        /** One bench for every session's shades: decodes queue, they never pile up. */
+        val decoder: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "charon-shades").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }
+        }
     }
 }
 
@@ -159,27 +212,66 @@ fun drawApparitions(
     paint: Paint,
     src: Rect,
     dst: Rect,
-) {
+    shimmer: Paint,
+    accent: Int,
+): Boolean {
+    var moving = false
+    val now = System.nanoTime()
     for (hit in hits) {
-        val bitmap = cache.bitmapFor(hit.image) ?: continue
-        // The placement's crop is in the image's own pixels; the decode may have been
-        // sampled down, so scale the crop into the bitmap we actually hold.
-        val scaleX = bitmap.width.toFloat() / hit.image.pixelWidth
-        val scaleY = bitmap.height.toFloat() / hit.image.pixelHeight
-        val p = hit.placement
-        val sx = (p.srcX * scaleX).roundToInt().coerceIn(0, bitmap.width)
-        val sy = (p.srcY * scaleY).roundToInt().coerceIn(0, bitmap.height)
-        val sw = if (p.srcW > 0) (p.srcW * scaleX).roundToInt() else bitmap.width - sx
-        val sh = if (p.srcH > 0) (p.srcH * scaleY).roundToInt() else bitmap.height - sy
-        if (sw <= 0 || sh <= 0) continue
-        src.set(sx, sy, (sx + sw).coerceAtMost(bitmap.width), (sy + sh).coerceAtMost(bitmap.height))
         dst.set(
             hit.left.roundToInt(), hit.top.roundToInt(),
             hit.right.roundToInt(), hit.bottom.roundToInt(),
         )
-        canvas.drawBitmap(bitmap, src, dst, paint)
+        when (val look = cache.lookFor(hit.image)) {
+            ApparitionCache.Look.Pending -> {
+                // Still on the decoder's bench: a slow sheen crosses the cells it will fill.
+                moving = true
+                val phase = ((now / 1_000_000L) % SHIMMER_MS).toFloat() / SHIMMER_MS
+                shimmer.color = accent and 0xFFFFFF or (0x1A shl 24)
+                canvas.drawRect(dst, shimmer)
+                val band = dst.width() * 0.35f
+                val x = dst.left - band + (dst.width() + band) * phase
+                shimmer.color = accent and 0xFFFFFF or (0x30 shl 24)
+                canvas.drawRect(maxOf(x, dst.left.toFloat()), dst.top.toFloat(), minOf(x + band, dst.right.toFloat()), dst.bottom.toFloat(), shimmer)
+            }
+            ApparitionCache.Look.Failed -> {
+                // Said, not hidden: a dim frame and a cross where the picture would be.
+                shimmer.color = accent and 0xFFFFFF or (0x55 shl 24)
+                shimmer.style = Paint.Style.STROKE
+                shimmer.strokeWidth = 2f
+                canvas.drawRect(dst, shimmer)
+                canvas.drawLine(dst.left.toFloat(), dst.top.toFloat(), dst.right.toFloat(), dst.bottom.toFloat(), shimmer)
+                canvas.drawLine(dst.right.toFloat(), dst.top.toFloat(), dst.left.toFloat(), dst.bottom.toFloat(), shimmer)
+                shimmer.style = Paint.Style.FILL
+            }
+            is ApparitionCache.Look.Ready -> {
+                val bitmap = look.bitmap
+                // The placement's crop is in the image's own pixels; the decode may have been
+                // sampled down, so scale the crop into the bitmap we actually hold.
+                val scaleX = bitmap.width.toFloat() / hit.image.pixelWidth
+                val scaleY = bitmap.height.toFloat() / hit.image.pixelHeight
+                val p = hit.placement
+                val sx = (p.srcX * scaleX).roundToInt().coerceIn(0, bitmap.width)
+                val sy = (p.srcY * scaleY).roundToInt().coerceIn(0, bitmap.height)
+                val sw = if (p.srcW > 0) (p.srcW * scaleX).roundToInt() else bitmap.width - sx
+                val sh = if (p.srcH > 0) (p.srcH * scaleY).roundToInt() else bitmap.height - sy
+                if (sw <= 0 || sh <= 0) continue
+                src.set(sx, sy, (sx + sw).coerceAtMost(bitmap.width), (sy + sh).coerceAtMost(bitmap.height))
+                // A freshly landed picture dissolves in rather than snapping on.
+                val age = (now - look.landedAt) / 1_000_000L
+                val alpha = if (look.landedAt == 0L || age >= DISSOLVE_MS) 255 else (255 * age / DISSOLVE_MS).toInt()
+                if (alpha < 255) moving = true
+                paint.alpha = alpha
+                canvas.drawBitmap(bitmap, src, dst, paint)
+                paint.alpha = 255
+            }
+        }
     }
+    return moving
 }
+
+private const val SHIMMER_MS = 1100L
+private const val DISSOLVE_MS = 280L
 
 /** How far above the glass a placement may start and still hang into view. */
 private const val MAX_OVERHANG = 200

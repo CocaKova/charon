@@ -50,6 +50,10 @@ fun StyxCrossing(
     connecting: Boolean,
     arrivals: Int,
     modifier: Modifier = Modifier,
+    /** The host-key or a server's question is up: the boat holds mid-river until it's answered. */
+    holding: Boolean = false,
+    /** Crossings are under way while you stand on the Dock: the boat is out on the water. */
+    away: Boolean = false,
     rows: Int = 8,
     fontSize: TextUnit = 12.sp,
 ) {
@@ -81,19 +85,25 @@ fun StyxCrossing(
         val moorX = PIER_W + 0.7f
         val awayX = cols + 4f
         val boatX = remember(cols) {
-            Animatable(if (arrivals > 0) awayX else moorX)
+            Animatable(if (arrivals > 0 || away) awayX else moorX)
         }
         var facing by remember { mutableStateOf(Facing.WEST) }
+        val midX = (moorX + awayX) / 2f
 
-        LaunchedEffect(connecting, cols) {
-            if (connecting && boatX.value < awayX) {
+        LaunchedEffect(connecting, holding, away, cols) {
+            if (connecting && holding) {
+                // A question at the gate (the host's key, a one-time code): the boat
+                // poles out to mid-river and holds there until it's answered.
+                facing = Facing.EAST
+                if (boatX.value < midX) boatX.animateTo(midX, tween(1800, easing = LinearOutSlowInEasing))
+            } else if ((connecting || away) && boatX.value < awayX) {
                 // Cast off: a slow push away from the pier, gathering way east.
                 facing = Facing.EAST
                 boatX.animateTo(
                     awayX,
-                    tween(3400, easing = CubicBezierEasing(0.55f, 0f, 0.85f, 0.7f)),
+                    tween(if (boatX.value > moorX + 0.5f) 1600 else 3400, easing = CubicBezierEasing(0.55f, 0f, 0.85f, 0.7f)),
                 )
-            } else if (!connecting && boatX.value > moorX + 0.01f) {
+            } else if (!connecting && !away && boatX.value > moorX + 0.01f) {
                 // Return to shore: out of the mist, way coming off, a gentle
                 // bump against the pilings, then the drift back onto her lines.
                 facing = Facing.WEST

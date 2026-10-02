@@ -277,8 +277,8 @@ class SshjEngine : SshEngine {
                     }
                 }.getOrNull()
 
-                override fun openSftp(): SftpChannel? =
-                    runCatching { SshjSftp(client.newSFTPClient()) }.getOrNull()
+                // Throws with the shore's own reason; SessionManager says it plainly.
+                override fun openSftp(): SftpChannel? = SshjSftp(client.newSFTPClient())
 
                 override fun setKeepAlive(intervalSeconds: Int) {
                     client.connection.keepAlive.keepAliveInterval = intervalSeconds

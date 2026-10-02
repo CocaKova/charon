@@ -1,5 +1,7 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.foundation.layout.sizeIn
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -544,18 +546,20 @@ fun TerminalScreen(
                 )
             }
 
-            // Grid-size readout: flashes cols × rows whenever the grid re-snaps
-            // (pinch-zoom, keyboard up/down). Teal when full-screen TUIs fit; ember
-            // below 80×24 — the honest answer to btop's "terminal size too small".
+            // Grid-size readout: flashes cols × rows when the width re-snaps (a
+            // pinch, a rotation). The keyboard rising or falling only changes the
+            // rows, which is ordinary weather, so it stays quiet. A phone's ~48
+            // columns in portrait is normal: the pill is teal, gold when a full-screen
+            // program is up and the grid is under the 80 × 24 most of them want, and
+            // ember only when the glass is genuinely too small to work in.
             val dims by session.dims.collectAsState()
             var dimsShown by remember(session.id) { mutableStateOf(false) }
-            var dimsSeen by remember(session.id) { mutableStateOf(false) }
-            LaunchedEffect(dims) {
+            var lastCols by remember(session.id) { mutableStateOf(-1) }
+            LaunchedEffect(dims.first) {
                 // The first snap is just the terminal finding its size — stay quiet.
-                if (!dimsSeen) {
-                    dimsSeen = true
-                    return@LaunchedEffect
-                }
+                val first = lastCols < 0
+                lastCols = dims.first
+                if (first) return@LaunchedEffect
                 dimsShown = true
                 delay(1400)
                 dimsShown = false
@@ -572,8 +576,15 @@ fun TerminalScreen(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.background,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (c < 80 || r < 24) Styx.ember else Styx.water)
+                            .clip(Hulls.pill)
+                            .background(
+                                when {
+                                    c < 20 || r < 6 -> Styx.ember
+                                    session.term.usingAlt && (c < 80 || r < 24) -> Styx.coin
+                                    else -> Styx.water
+                                },
+                            )
+                            .semantics { contentDescription = "$c columns by $r rows" }
                             .padding(horizontal = 14.dp, vertical = 6.dp),
                     )
                     Spacer(Modifier.height(8.dp))
@@ -586,9 +597,9 @@ fun TerminalScreen(
                         color = Styx.coin,
                         modifier = Modifier
                             .padding(top = 6.dp)
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(Hulls.pill)
                             .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, Styx.coin.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+                            .border(1.dp, Styx.coin.copy(alpha = 0.45f), Hulls.pill)
                             .padding(horizontal = 14.dp, vertical = 6.dp),
                     )
                 }
@@ -642,9 +653,10 @@ fun TerminalScreen(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.background,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(Hulls.pill)
                                 .background(Styx.coin)
-                                .clickable { session.scrollToBottom() }
+                                .clickable(onClickLabel = "back to the live edge") { session.scrollToBottom() }
+                                .semantics { contentDescription = "back to the live edge" }
                                 .padding(horizontal = 18.dp, vertical = 7.dp),
                         )
                         // Prompt hops (a rigged shell's OSC 133 A marks): the command above,
@@ -656,7 +668,7 @@ fun TerminalScreen(
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.background,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(Hulls.pill)
                                     .background(Styx.water)
                                     .clickable(onClickLabel = "previous prompt") { session.jumpToPrompt(older = true) }
                                     .semantics { contentDescription = "jump to the previous prompt" }
@@ -668,7 +680,7 @@ fun TerminalScreen(
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.background,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(Hulls.pill)
                                     .background(Styx.water)
                                     .clickable(onClickLabel = "next prompt") { session.jumpToPrompt(older = false) }
                                     .semantics { contentDescription = "jump to the next prompt" }
@@ -682,9 +694,10 @@ fun TerminalScreen(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.background,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(Hulls.pill)
                                 .background(Styx.water)
-                                .clickable { dredgeFocused = true }
+                                .clickable(onClickLabel = "search the scrollback") { dredgeFocused = true }
+                                .semantics { contentDescription = "search the scrollback" }
                                 .padding(horizontal = 16.dp, vertical = 7.dp),
                         )
                     }
@@ -703,7 +716,7 @@ fun TerminalScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(Hulls.pill)
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable { session.selectAll() }
                             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -714,7 +727,7 @@ fun TerminalScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.background,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(Hulls.pill)
                             .background(Styx.water)
                             .clickable {
                                 session.copySelection()?.let {
@@ -890,8 +903,9 @@ private fun SessionSwitcher(
             // Back to shore: the Dock, with every crossing left running at sea.
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onDock)
+                    .clip(Hulls.chip)
+                    .clickable(onClickLabel = "back to the dock", onClick = onDock)
+                    .semantics { contentDescription = "back to the dock" }
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             ) {
                 Text(
@@ -912,8 +926,9 @@ private fun SessionSwitcher(
             }
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onNewSession)
+                    .clip(Hulls.chip)
+                    .clickable(onClickLabel = "new crossing", onClick = onNewSession)
+                    .semantics { contentDescription = "new crossing" }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 Text(
@@ -925,8 +940,9 @@ private fun SessionSwitcher(
             // The hold: this session's SFTP deck.
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onFiles)
+                    .clip(Hulls.chip)
+                    .clickable(onClickLabel = "open the hold", onClick = onFiles)
+                    .semantics { contentDescription = "the hold: this crossing's files" }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 Text(
@@ -938,8 +954,9 @@ private fun SessionSwitcher(
             // Charted channels: this session's port forwards.
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onForwards)
+                    .clip(Hulls.chip)
+                    .clickable(onClickLabel = "chart channels", onClick = onForwards)
+                    .semantics { contentDescription = "charted channels: port forwards" }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 Text(
@@ -1056,7 +1073,7 @@ private fun SessionTab(
 
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(Hulls.chip)
             .background(
                 if (active) MaterialTheme.colorScheme.surfaceVariant
                 else MaterialTheme.colorScheme.surface,
@@ -1081,17 +1098,40 @@ private fun SessionTab(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 160.dp),
         )
-        Spacer(Modifier.width(4.dp))
+        // Closing a live crossing takes two taps: the first arms the × (ember,
+        // "close?"), the second ends it; left alone it disarms after three seconds.
+        // A crossing already adrift closes on one. The target is a full 40dp.
+        val live = state is TerminalSession.State.Connected || state is TerminalSession.State.Reconnecting
+        var armed by remember(session.id) { mutableStateOf(false) }
+        LaunchedEffect(armed) {
+            if (armed) {
+                delay(3000)
+                armed = false
+            }
+        }
+        val haptic = LocalHapticFeedback.current
         Box(
             modifier = Modifier
+                .sizeIn(minWidth = 40.dp, minHeight = 40.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onClose)
-                .padding(4.dp),
+                .clickable(onClickLabel = if (armed) "end this crossing" else "close") {
+                    if (!live || armed) {
+                        armed = false
+                        onClose()
+                    } else {
+                        armed = true
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                }
+                .semantics {
+                    contentDescription = if (armed) "tap again to end ${session.label}" else "close ${session.label}"
+                },
+            contentAlignment = Alignment.Center,
         ) {
             Text(
-                "×",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Styx.mist,
+                if (armed) "close?" else "×",
+                style = if (armed) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
+                color = if (armed) Styx.ember else Styx.mist,
             )
         }
     }
@@ -1152,7 +1192,7 @@ private fun SuggestionChipPill(
     }
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
+            .clip(Hulls.chip)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .combinedClickable(
                 onClick = onClick,
@@ -1166,9 +1206,9 @@ private fun SuggestionChipPill(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("»", fontFamily = CharonMono, fontSize = 13.sp, color = Styx.coin)
+        Text("»", style = MaterialTheme.typography.bodyMedium, color = Styx.coin)
         Spacer(Modifier.width(8.dp))
-        Text(text = label, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
+        Text(text = label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
     }
 }
 
@@ -1205,9 +1245,9 @@ private fun TollPill(phase: TerminalSession.TollPhase, pulse: Int) {
     )
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(Hulls.pill)
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, Styx.coin.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+            .border(1.dp, Styx.coin.copy(alpha = 0.45f), Hulls.pill)
             .padding(horizontal = 14.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1282,9 +1322,9 @@ private fun DredgeBar(
                 decorationBox = { inner ->
                     Box(
                         Modifier
-                            .clip(RoundedCornerShape(20.dp))
+                            .clip(Hulls.pill)
                             .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (error != null) Styx.ember else Styx.water.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                            .border(1.dp, if (error != null) Styx.ember else Styx.water.copy(alpha = 0.6f), Hulls.pill)
                             .padding(horizontal = 14.dp, vertical = 9.dp),
                     ) {
                         if (query.isEmpty()) {
@@ -1332,9 +1372,9 @@ private fun DredgePill(label: String, description: String, lit: Boolean = true, 
         style = MaterialTheme.typography.labelLarge,
         color = if (lit) MaterialTheme.colorScheme.background else Styx.water,
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(Hulls.pill)
             .background(if (lit) Styx.water else Color.Transparent)
-            .border(1.dp, Styx.water, RoundedCornerShape(20.dp))
+            .border(1.dp, Styx.water, Hulls.pill)
             .clickable(onClickLabel = description) { onClick() }
             .semantics { contentDescription = description }
             .padding(horizontal = 12.dp, vertical = 7.dp),
@@ -1404,12 +1444,12 @@ private fun CargoStrip(view: CargoWatch.View) {
     }
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Hulls.card)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(water, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
+        Text(water, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
         Spacer(Modifier.height(3.dp))
         val head = buildString {
             append(
@@ -1438,7 +1478,7 @@ private fun CargoStrip(view: CargoWatch.View) {
                 }
             }
         }
-        Text(label, fontFamily = CharonMono, fontSize = 11.sp, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
@@ -1470,7 +1510,7 @@ private fun ConnectingPill(text: String) {
         Row(
             modifier = Modifier
                 .padding(bottom = 16.dp)
-                .clip(RoundedCornerShape(20.dp))
+                .clip(Hulls.pill)
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 18.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1558,7 +1598,7 @@ private fun CrossingFailedOverlay(
     ) {
         Column(
             modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
+                .clip(Hulls.card)
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

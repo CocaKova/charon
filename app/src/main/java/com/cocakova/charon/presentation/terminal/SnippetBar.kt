@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.terminal
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -79,7 +79,7 @@ fun SnippetBar(
             Row(
                 modifier = Modifier
                     .scale(give)
-                    .clip(RoundedCornerShape(9.dp))
+                    .clip(Hulls.chip)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .combinedClickable(
                         interactionSource = interaction,
@@ -117,7 +117,7 @@ fun SnippetBar(
             style = MaterialTheme.typography.titleMedium,
             color = Styx.water,
             modifier = Modifier
-                .clip(RoundedCornerShape(9.dp))
+                .clip(Hulls.chip)
                 .clickable { addingNew = true }
                 .padding(horizontal = 12.dp, vertical = 4.dp),
         )

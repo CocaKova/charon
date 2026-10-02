@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.forwards
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -25,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -218,7 +218,7 @@ private fun ChannelRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Hulls.card)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onToggle)
             .padding(horizontal = 12.dp, vertical = 10.dp)
@@ -328,7 +328,7 @@ private fun AddChannelForm(
                     style = MaterialTheme.typography.labelMedium,
                     color = if (selected) MaterialTheme.colorScheme.onPrimary else Styx.mist,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(Hulls.chip)
                         .background(
                             if (selected) Styx.water
                             else MaterialTheme.colorScheme.surfaceVariant,

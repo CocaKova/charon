@@ -1,9 +1,9 @@
 package com.cocakova.charon.presentation.components
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,12 +31,11 @@ fun ChoicePill(
 ) {
     Text(
         label,
-        fontFamily = CharonMono,
-        fontSize = 13.sp,
+        style = MaterialTheme.typography.bodyMedium,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
         color = if (selected) MaterialTheme.colorScheme.onPrimary else Styx.mist,
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(Hulls.card)
             .background(
                 if (selected) selectedColor
                 else MaterialTheme.colorScheme.surfaceVariant,

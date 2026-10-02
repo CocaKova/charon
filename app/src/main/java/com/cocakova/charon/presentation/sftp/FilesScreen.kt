@@ -1,5 +1,9 @@
 package com.cocakova.charon.presentation.sftp
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.foundation.layout.sizeIn
+import com.cocakova.charon.theme.Hulls
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import android.widget.Toast
@@ -35,7 +39,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -98,6 +101,8 @@ fun FilesScreen(
     onBack: () -> Unit,
     /** Open here instead of home (a tapped file:// path, the shell's cwd); a file opens its folder. */
     startPath: String? = null,
+    /** Why the hold wouldn't open, literally and plainly (null = no reason known). */
+    unreachableReason: () -> String? = { null },
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -147,7 +152,7 @@ fun FilesScreen(
         withContext(Dispatchers.IO) {
             val ch = openSftp()
             if (ch == null) {
-                error = "the hold is unreachable"
+                error = "the hold is unreachable\n" + (unreachableReason() ?: "")
                 loading = false
             } else {
                 channel = ch
@@ -185,7 +190,7 @@ fun FilesScreen(
         withContext(Dispatchers.IO) {
             val ch = openSftp()
             if (ch == null) {
-                scroll = ScrollContent.Refused("the hold is unreachable")
+                scroll = ScrollContent.Refused("the hold is unreachable\n" + (unreachableReason() ?: ""))
                 return@withContext
             }
             scroll = try {
@@ -642,13 +647,25 @@ private fun HoldTopBar(
 
 @Composable
 internal fun BarAction(label: String, onClick: () -> Unit, tint: androidx.compose.ui.graphics.Color = Styx.mist) {
+    val spoken = when (label) {
+        "←" -> "back"
+        "↻" -> "read the deck again"
+        "+dir" -> "new folder"
+        "⇡ aboard" -> "carry files aboard"
+        "⇣", "⇣ ashore" -> "carry ashore"
+        "⋯" -> "more"
+        "✕" -> "clear the choice"
+        else -> label
+    }
     Text(
         label,
         style = MaterialTheme.typography.labelMedium,
         color = tint,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .sizeIn(minHeight = 40.dp)
+            .clip(Hulls.chip)
+            .clickable(onClickLabel = spoken, onClick = onClick)
+            .semantics { contentDescription = spoken }
             .padding(horizontal = 10.dp, vertical = 10.dp),
     )
 }
@@ -764,7 +781,7 @@ private fun SheetAction(label: String, tint: androidx.compose.ui.graphics.Color,
         color = tint,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Hulls.card)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 12.dp),
     )
@@ -799,7 +816,7 @@ private fun TransferRow(t: SftpTransfers.Transfer, onOpen: (SftpTransfers.Transf
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
+            .clip(Hulls.chip)
             .then(if (openable) Modifier.clickable { onOpen(t) } else Modifier)
             .padding(vertical = 4.dp),
     ) {

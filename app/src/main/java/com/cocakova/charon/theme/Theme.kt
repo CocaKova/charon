@@ -108,6 +108,7 @@ fun CharonTheme(
         MaterialTheme(
             colorScheme = if (darkTheme) CharonDarkScheme else CharonLightScheme,
             typography = CharonTypography,
+            shapes = CharonShapes,
             content = content,
         )
     }

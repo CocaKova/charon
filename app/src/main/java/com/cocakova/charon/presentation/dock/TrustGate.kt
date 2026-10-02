@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.dock
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -148,12 +148,12 @@ private fun FingerprintPlaque(label: String, fingerprint: String, dark: Boolean 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Hulls.card)
             .background(Styx.night)
             .border(
                 1.dp,
                 if (dark) Styx.night else MaterialTheme.colorScheme.surfaceVariant,
-                RoundedCornerShape(10.dp),
+                Hulls.card,
             )
             .padding(14.dp),
     ) {

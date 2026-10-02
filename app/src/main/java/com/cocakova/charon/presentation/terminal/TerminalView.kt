@@ -1,5 +1,12 @@
 package com.cocakova.charon.presentation.terminal
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -47,6 +54,7 @@ import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.Apparition
 import com.cocakova.charon.terminal.CellAttrs
 import com.cocakova.charon.terminal.CellExt
+import com.cocakova.charon.terminal.Contrast
 import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.SearchEngine
 import com.cocakova.charon.terminal.TerminalEmulator
@@ -271,6 +279,17 @@ fun TerminalView(
     // Unit so the gesture survives the font-size changes it causes itself.
     val currentOnZoom by rememberUpdatedState(onZoom)
 
+    // Scrollback fling: the coast after a flick, cancelled by the next touch.
+    val flingScope = rememberCoroutineScope()
+    var flingJob by remember { mutableStateOf<Job?>(null) }
+
+    // Shimmer and dissolve frames for shades: driven only while one is moving.
+    var shadesMoving by remember { mutableStateOf(false) }
+    var shadeFrame by remember { mutableStateOf(0L) }
+    LaunchedEffect(shadesMoving) {
+        while (shadesMoving) withFrameNanos { shadeFrame = it }
+    }
+
     Canvas(
         modifier = modifier
             .onSizeChanged { pendingSize = it }
@@ -327,8 +346,12 @@ fun TerminalView(
                 var startCell = TextSelection.Cell(0, 0)
                 var lastMouseCell = TextSelection.Cell(0, 0)
                 var accum = 0f
+                val velocity = VelocityTracker()
                 detectDragGestures(
                     onDragStart = { pos ->
+                        // A finger on the water stops any fling still running.
+                        flingJob?.cancel()
+                        velocity.resetTracking()
                         startCell = viewCellOf(pos)
                         accum = 0f
                         val sel = session.selection.value
@@ -343,6 +366,7 @@ fun TerminalView(
                         }
                     },
                     onDrag = { change, drag ->
+                        velocity.addPosition(change.uptimeMillis, change.position)
                         if (mode == DragMode.MOUSE_PENDING) {
                             mode = if (abs(drag.x) > abs(drag.y)) {
                                 session.mouseDown(startCell)
@@ -395,6 +419,28 @@ fun TerminalView(
                     },
                     onDragEnd = {
                         if (mode == DragMode.MOUSE_DRAG) session.mouseUp(lastMouseCell)
+                        // A flick carries on: the scrollback coasts and slows like
+                        // water, row by row, stopping at either end.
+                        if (mode == DragMode.SCROLL) {
+                            val v = velocity.calculateVelocity().y
+                            if (abs(v) > FLING_MIN_VELOCITY) {
+                                val rowH = paints.cellHeight
+                                flingJob = flingScope.launch {
+                                    var last = 0f
+                                    var carry = accum
+                                    AnimationState(initialValue = 0f, initialVelocity = v)
+                                        .animateDecay(exponentialDecay(frictionMultiplier = 1.4f)) {
+                                            carry += value - last
+                                            last = value
+                                            while (carry >= rowH) { session.scrollBy(1); carry -= rowH }
+                                            while (carry <= -rowH) { session.scrollBy(-1); carry += rowH }
+                                            // Run aground at either end: the coast is over.
+                                            val at = session.scrollOffset.value
+                                            if ((v < 0 && at == 0) || (v > 0 && at >= session.historySize())) cancelAnimation()
+                                        }
+                                }
+                            }
+                        }
                         mode = DragMode.NONE
                         selEdgeDrag = 0
                     },
@@ -409,6 +455,8 @@ fun TerminalView(
         frame // subscribe: redraw whenever the emulator generation advances
         selection // subscribe: redraw when the selection changes
         scrollOffset // subscribe: redraw when the viewport scrolls
+        apparitions?.landed // subscribe: a shade came off the decoder's bench
+        shadeFrame // subscribe: a shade is shimmering or dissolving
         val cursor = CursorLook(shapeFrom, shapeTo, morph.value, ripple.value)
         drawIntoCanvas { canvas ->
             synchronized(session.lock) {
@@ -419,10 +467,15 @@ fun TerminalView(
                 )
             }
         }
+        // Frames only while a shade moves; the glass goes still the moment none do.
+        if (paints.shadesMoving != shadesMoving) shadesMoving = paints.shadesMoving
     }
 }
 
 private enum class DragMode { NONE, SELECT, WHEEL, SCROLL, MOUSE_PENDING, MOUSE_DRAG }
+
+/** px/s: slower than this a lifted finger just stops; faster, the scrollback coasts. */
+private const val FLING_MIN_VELOCITY = 900f
 
 /** The three cursor shapes DECSCUSR can ask for. */
 enum class CursorShape { BLOCK, UNDERLINE, BAR }
@@ -463,9 +516,11 @@ private const val BELL_RIPPLE_MS = 480
 
 /** The water's glow: the cursor is Styx.water, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
+
 /** The dredge washes: teal for every sighting, gold for the one the eye is on. */
-private const val SEARCH_TEAL = 0x3ECFB2
 private const val SEARCH_GOLD = 0xD9A441
+/** Daybreak's gold ink: the current sighting on paper. */
+private const val SEARCH_GOLD_PAPER = 0x8F6914
 private const val CURSOR_BLINK_NANOS = 530_000_000L
 /** A link's own dotted underline: present, never louder than the text it marks. */
 private const val LINK_ALPHA = 150
@@ -486,6 +541,34 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
     }
     val fill = Paint()
 
+    /** fg → the colour actually drawn on bg, after the contrast floor; memoized per pair. */
+    private val floorCache = HashMap<Long, Int>(64)
+
+    private var floorMin = 0.0
+
+    /**
+     * The floor for this frame: paper grounds hold glyphs to 3 : 1, night grounds to
+     * a gentler 2 : 1 (dark-blue-on-black stays the colour it was chosen to be).
+     */
+    fun floorFor(defaultBg: Int) {
+        val min = if (Contrast.luminance(defaultBg) > 0.4) 3.0 else 2.0
+        if (min != floorMin) {
+            floorMin = min
+            floorCache.clear()
+        }
+    }
+
+    fun readable(fg: Int, bg: Int): Int {
+        val key = ((fg.toLong() and 0xFFFFFF) shl 24) or (bg.toLong() and 0xFFFFFF)
+        return floorCache.getOrPut(key) {
+            if (floorCache.size > 512) floorCache.clear()
+            Contrast.floor(fg, bg, floorMin)
+        }
+    }
+
+    /** The ground is paper (Daybreak): washes need more body to show. */
+    var lightGround = false
+
     /** The duration whisper beside a finished prompt: smaller, quieter than the text. */
     val whisper = Paint().apply {
         typeface = regular
@@ -493,6 +576,12 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
         isAntiAlias = true
         isSubpixelText = true
     }
+
+    /** The sheen over a shade still on the decoder's bench, and the frame of one that failed. */
+    val shimmer = Paint().apply { isAntiAlias = true }
+
+    /** Set by the draw: a shade is shimmering or dissolving, so another frame is wanted. */
+    var shadesMoving = false
 
     /** Bitmaps go down filtered — a scaled photo should not look like a mosaic. */
     val image = Paint().apply {
@@ -573,6 +662,8 @@ private fun drawTerminal(
 
     p.fill.color = opaque(defaultBg)
     canvas.drawRect(0f, 0f, width, height, p.fill)
+    p.floorFor(defaultBg)
+    p.lightGround = Contrast.luminance(defaultBg) > 0.4
 
     // Everything from here draws in grid space, offset into the gutter.
     canvas.save()
@@ -589,19 +680,21 @@ private fun drawTerminal(
         if (hits.isNotEmpty()) {
             canvas.save()
             canvas.clipRect(0f, 0f, width - p.padX, height - p.padY)
-            drawApparitions(canvas, hits, apparitions, p.image, p.srcScratch(), p.dstScratch())
+            p.shadesMoving = drawApparitions(
+                canvas, hits, apparitions, p.image, p.srcScratch(), p.dstScratch(), p.shimmer, cursorColor,
+            )
             canvas.restore()
         }
     }
 
     // Selection tint under the glyphs: a translucent wash of the river's teal.
     if (selection != null) {
-        drawSelection(canvas, p, term, selection, cw, ch, scrollOffset)
+        drawSelection(canvas, p, term, selection, cw, ch, scrollOffset, cursorColor)
     }
     // Dredge hits wash under the glyphs too: teal for every sighting, gold for
     // the one the eye is on. Drawn after the selection so the gold stays visible.
     if (search != null && search.hits.isNotEmpty()) {
-        drawSearchHits(canvas, p, term, search, cw, ch, scrollOffset)
+        drawSearchHits(canvas, p, term, search, cw, ch, scrollOffset, cursorColor)
     }
 
     for (row in 0 until term.rows) {
@@ -655,7 +748,9 @@ private fun drawTerminal(
             }
             if (!CellAttrs.hasStyle(attrs, CellAttrs.INVISIBLE)) {
                 val alpha = if (CellAttrs.hasStyle(attrs, CellAttrs.FAINT)) 140 else 255
-                p.text.color = opaque(fg)
+                // The minimum-contrast floor: a colour that vanishes on this ground
+                // (ANSI white on Daybreak's paper) is walked toward ink until it reads.
+                p.text.color = opaque(p.readable(fg, bg))
                 p.text.typeface = if (CellAttrs.hasStyle(attrs, CellAttrs.BOLD)) p.bold else p.regular
                 p.text.alpha = alpha
                 p.text.isStrikeThruText = CellAttrs.hasStyle(attrs, CellAttrs.STRIKETHROUGH)
@@ -758,12 +853,14 @@ private fun drawSelection(
     cw: Float,
     ch: Float,
     scrollOffset: Int,
+    accent: Int,
 ) {
     val a = selection.anchor
     val b = selection.focus
     val (start, end) = if (a.row < b.row || (a.row == b.row && a.col <= b.col)) a to b else b to a
-    p.fill.color = CURSOR_TEAL
-    p.fill.alpha = 70
+    // The livery's own accent, with more body on paper where a faint wash vanishes.
+    p.fill.color = accent
+    p.fill.alpha = if (p.lightGround) 96 else 70
     // Clamp the walk to the visible window up front — a select-all over a deep
     // scrollback must not iterate thousands of off-screen rows every frame.
     val firstVisible = maxOf(start.row, -scrollOffset)
@@ -794,18 +891,20 @@ private fun drawSearchHits(
     cw: Float,
     ch: Float,
     scrollOffset: Int,
+    accent: Int,
 ) {
     val firstVisible = -scrollOffset
     val lastVisible = term.rows - 1 - scrollOffset
     // Hits name their lines by lasting number; today's push count maps them onto
     // rows, so the wash stays on its words between refreshes while output scrolls.
     val pushed = term.screen.linesPushed
-    p.fill.alpha = 84
+    p.fill.alpha = if (p.lightGround) 120 else 84
+    val gold = if (p.lightGround) SEARCH_GOLD_PAPER else SEARCH_GOLD
     for ((i, hit) in search.hits.withIndex()) {
         val firstRow = hit.row(pushed)
         val lastRow = (hit.endLine - pushed).toInt()
         if (lastRow < firstVisible || firstRow > lastVisible) continue
-        p.fill.color = if (i == search.current) SEARCH_GOLD else SEARCH_TEAL
+        p.fill.color = if (i == search.current) gold else accent
         // A hit the grid wrapped runs to the row's end, then on from the next row's start.
         for (row in maxOf(firstRow, firstVisible)..minOf(lastRow, lastVisible)) {
             val from = if (row == firstRow) hit.start else 0

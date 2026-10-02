@@ -220,6 +220,9 @@ class SessionManager(
     }
 
     /** Show a specific live session. */
+    /** This crossing has reached its shore at least once (a redial isn't a first crossing). */
+    fun hasLanded(id: String): Boolean = managed[id]?.everConnected == true
+
     fun switchTo(id: String) {
         if (managed.containsKey(id)) {
             activeId.value = id
@@ -282,10 +285,11 @@ class SessionManager(
                 autoStartForwards(ms)
                 updateService()
             } catch (e: Exception) {
-                if (firstAttempt) lastError.value = e.message ?: e.javaClass.simpleName
+                // Said literally, then plainly: the raw error and what it most likely means.
+                val said = Shoals.describe(e, ms.config.host, ms.config.port)
+                if (firstAttempt) lastError.value = said
                 // A failed connect is never a clean end — the watcher decides on a redial.
-                ms.session.state.value =
-                    TerminalSession.State.Disconnected(e.message ?: "connect failed", clean = false)
+                ms.session.state.value = TerminalSession.State.Disconnected(said, clean = false)
             }
         }
     }
@@ -459,7 +463,19 @@ class SessionManager(
     fun contextFor(id: String): RemoteContext? = managed[id]?.remote
 
     /** A fresh SFTP channel on a live session's transport. Blocking; call off-main. */
-    fun openSftp(id: String): SftpChannel? = managed[id]?.connection?.openSftp()
+    fun openSftp(id: String): SftpChannel? {
+        val ms = managed[id] ?: run { holdError.value = "the crossing has ended"; return null }
+        val conn = ms.connection ?: run { holdError.value = "the crossing isn't up — it's redialing or adrift"; return null }
+        return try {
+            conn.openSftp().also { holdError.value = null }
+        } catch (e: Exception) {
+            holdError.value = Shoals.literal(e) + "\nthe shore may not run an SFTP subsystem (Subsystem sftp in sshd_config)"
+            null
+        }
+    }
+
+    /** Why the hold last failed to open, literally and plainly; null after a good open. */
+    val holdError = MutableStateFlow<String?>(null)
 
     /** The session's display label, for chrome that outlives the object (files view). */
     fun labelFor(id: String): String? = managed[id]?.session?.label

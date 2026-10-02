@@ -1,5 +1,6 @@
 package com.cocakova.charon.presentation.dock
 
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -251,7 +251,7 @@ fun MooringOfferRow(
             style = MaterialTheme.typography.labelLarge,
             color = Styx.water,
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Hulls.chip)
                 .clickable(onClick = onMoor)
                 .padding(horizontal = 10.dp, vertical = 12.dp),
         )
@@ -260,7 +260,7 @@ fun MooringOfferRow(
             style = MaterialTheme.typography.labelLarge,
             color = Styx.mist,
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Hulls.chip)
                 .clickable(onClick = onDrift)
                 .semantics { contentDescription = "let it drift" }
                 .padding(horizontal = 14.dp, vertical = 12.dp),

@@ -1,5 +1,7 @@
 package com.cocakova.charon.presentation.sftp
 
+import com.cocakova.charon.theme.ScrollText
+import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -274,7 +275,7 @@ private fun RawScroll(content: ScrollContent.Read) {
             items(chunks.size, key = { it }) { i ->
                 Text(
                     chunks[i],
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                    style = ScrollText,
                     color = Styx.bone,
                 )
             }
@@ -370,7 +371,7 @@ private fun MdBlockView(block: MdBlock) {
             Modifier
                 .fillMaxWidth()
                 .padding(vertical = 7.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Hulls.chip)
                 // Same ground as an inline code span, so code reads as code at both
                 // scales — and it holds its edge against the page in either theme.
                 .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -383,7 +384,7 @@ private fun MdBlockView(block: MdBlock) {
             // Code keeps its own lines: no wrapping, scroll it sideways instead.
             Text(
                 block.body,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                style = ScrollText,
                 color = Styx.bone,
                 softWrap = false,
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -415,12 +416,7 @@ private fun EditScroll(text: String, onChange: (String) -> Unit) {
     androidx.compose.foundation.text.BasicTextField(
         value = text,
         onValueChange = onChange,
-        textStyle = MaterialTheme.typography.bodySmall.copy(
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            fontFamily = com.cocakova.charon.theme.CharonMono,
-            color = Styx.bone,
-        ),
+        textStyle = ScrollText.copy(color = Styx.bone),
         cursorBrush = androidx.compose.ui.graphics.SolidColor(Styx.water),
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrectEnabled = false),
         modifier = Modifier

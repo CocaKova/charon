@@ -10,7 +10,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.cocakova.charon.fleet.HailTarget
 import com.cocakova.charon.reach.Reach
+import com.cocakova.charon.ssh.TerminalSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -180,10 +188,16 @@ private fun CharonRoot(
     }
 
     val current = active
+    // A first crossing (never yet landed) stays on the Dock: the boat poles off
+    // through key exchange and auth, holds mid-river while the host's key or a
+    // server's question waits, and the terminal dissolves in on landing.
+    val currentState = current?.state?.collectAsState()?.value
+    val crossing = current != null && currentState is TerminalSession.State.Connecting &&
+        !sessionManager.hasLanded(current.id)
     // Terminal on screen whenever a session is active; null active = the Dock, with
     // any live crossings still running in the background. filesFor overlays the
     // hold (SFTP) for one session; it clears itself if that session closes.
-    val showTerminal = current != null
+    val showTerminal = current != null && !crossing
     var filesFor by remember { mutableStateOf<String?>(null) }
     // Where the hold opens: a tapped file:// path, else the shell's own cwd, else home.
     var filesPath by remember { mutableStateOf<String?>(null) }
@@ -234,10 +248,12 @@ private fun CharonRoot(
     // Count returns from sea so the Dock can play the ferry docking on arrival.
     var atSea by remember { mutableStateOf(false) }
     var arrivals by remember { mutableIntStateOf(0) }
-    LaunchedEffect(showTerminal) {
+    // The ferry returns only when the last crossing has ended — stepping ashore to
+    // the Dock with crossings still out on the water is not an arrival.
+    LaunchedEffect(showTerminal, sessions.isEmpty()) {
         if (showTerminal) {
             atSea = true
-        } else if (atSea) {
+        } else if (atSea && sessions.isEmpty()) {
             atSea = false
             arrivals++
         }
@@ -249,10 +265,24 @@ private fun CharonRoot(
         else -> Screen.DOCK
     }
 
-    // One crossfade for the whole crossing: the Dock -> terminal -> the hold.
-    Crossfade(
+    // The crossing between screens: the terminal dissolves in out of the water (a
+    // breath of scale with the fade), the Dock comes back the same way in reverse,
+    // and the hold slides up from below the terminal it belongs to.
+    AnimatedContent(
         targetState = screen,
-        animationSpec = tween(durationMillis = 500),
+        transitionSpec = {
+            when {
+                targetState == Screen.FILES ->
+                    (slideInVertically(tween(320)) { it / 6 } + fadeIn(tween(260))) togetherWith fadeOut(tween(200))
+                initialState == Screen.FILES ->
+                    fadeIn(tween(260)) togetherWith (slideOutVertically(tween(280)) { it / 6 } + fadeOut(tween(220)))
+                targetState == Screen.TERMINAL ->
+                    (fadeIn(tween(520, delayMillis = 60)) + scaleIn(tween(520), initialScale = 0.985f)) togetherWith
+                        fadeOut(tween(260))
+                else ->
+                    fadeIn(tween(420)) togetherWith (fadeOut(tween(300)) + scaleOut(tween(300), targetScale = 0.985f))
+            }
+        },
         label = "crossing",
     ) { target ->
         if (target == Screen.FILES && filesFor != null) {
@@ -261,6 +291,7 @@ private fun CharonRoot(
                 sessionLabel = sessionManager.labelFor(id) ?: "",
                 openSftp = { sessionManager.openSftp(id) },
                 startPath = filesPath,
+                unreachableReason = { sessionManager.holdError.value },
                 transfers = transfers,
                 onBack = { filesFor = null },
             )
@@ -297,7 +328,9 @@ private fun CharonRoot(
                 identities = identities,
                 runningSessions = sessions,
                 onResumeSession = { sessionManager.switchTo(it) },
-                connecting = false,
+                connecting = crossing,
+                holding = crossing && (pendingTrust != null || pendingChallenge != null),
+                onTurnBack = { current?.let { sessionManager.close(it.id) } },
                 arrivals = arrivals,
                 error = error,
                 onConnect = { host ->
