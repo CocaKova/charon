@@ -82,7 +82,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import com.cocakova.charon.autocomplete.SecretGate
 import com.cocakova.charon.autocomplete.Completer
-import com.cocakova.charon.cargo.CargoLading
+import com.cocakova.charon.cargo.CargoWatch
 import com.cocakova.charon.autocomplete.RemoteContext
 import com.cocakova.charon.autocomplete.Suggestion
 import com.cocakova.charon.data.db.PortForwardEntity
@@ -129,7 +129,11 @@ fun TerminalScreen(
     val scrollOffset by session.scrollOffset.collectAsState()
     val toll by session.toll.collectAsState()
     val tollPulse by session.tollPulse.collectAsState()
-    val cargo by session.cargo.collectAsState()
+    // Subscribe through collectAsState, but read the flow itself: collectAsState
+    // hands back the previous tab's value for a frame after a switch, and a barge
+    // must never sail over the wrong ferry.
+    val cargoTick by session.cargo.collectAsState()
+    val cargo = session.cargo.value.also { cargoTick }
     val clipboard = LocalClipboardManager.current
     var ctrl by remember { mutableStateOf(Sticky.OFF) }
     var alt by remember { mutableStateOf(Sticky.OFF) }
@@ -317,37 +321,15 @@ fun TerminalScreen(
         if (session.echoPending == pending) session.markHiddenInput()
     }
 
-    // The lading glean: while a cargo watch is armed, read the bottom of the screen
-    // for the package manager's output grammar — per-package verb lines and the
-    // freshest percent — and keep the strip alive only while cargo is moving.
-    var cargoItem by remember(session.id) { mutableStateOf<String?>(null) }
-    var cargoPct by remember(session.id) { mutableStateOf<Int?>(null) }
-    var cargoLive by remember(session.id) { mutableStateOf(false) }
-    LaunchedEffect(cargo) {
-        if (cargo == null) {
-            cargoLive = false
-            return@LaunchedEffect
-        }
-        cargoItem = null
-        cargoPct = null
-        cargoLive = false
-        var verbAt = 0L
-        while (true) {
-            val glean = CargoLading.glean(session.tailText(8))
-            val now = System.nanoTime()
-            if (glean.verbSeen) verbAt = now
-            if (verbAt != 0L) {
-                glean.item?.let { cargoItem = it }
-                glean.percent?.let { cargoPct = it }
-            }
-            cargoLive = verbAt != 0L && now - verbAt < 4_000_000_000L
-            // A minute of total silence means the lading ended long ago.
-            if (now - session.lastOutputAt > 60_000_000_000L) {
-                session.endCargo()
-                break
-            }
-            delay(200)
-        }
+    // The lading beat: while this session's watch has anything to show, tick it —
+    // it gleans the bottom rows only when new output has landed, and every end
+    // (finished, ^C, alt screen, a drop) is the watch's to call, not this loop's.
+    // Keyed on the session as well as the awake flag: a loop keyed on the flag
+    // alone kept beating for the tab you had just left.
+    val cargoAwake by session.cargoAwake.collectAsState()
+    LaunchedEffect(session, cargoAwake) {
+        if (!cargoAwake) return@LaunchedEffect
+        while (session.cargoTick()) delay(200)
     }
 
     // Stepping off the terminal must drop the keyboard NOW, while the input view is
@@ -517,8 +499,12 @@ fun TerminalScreen(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                AnimatedVisibility(visible = cargo != null && cargoLive && toll == null) {
-                    CargoStrip(item = cargoItem, percent = cargoPct)
+                // The last view stays drawable while the strip fades out.
+                val cargoView = cargo?.takeIf { System.nanoTime() < it.until }
+                var lastCargo by remember(session.id) { mutableStateOf<CargoWatch.View?>(null) }
+                if (cargoView != null) lastCargo = cargoView
+                AnimatedVisibility(visible = cargoView != null && toll == null) {
+                    lastCargo?.let { CargoStrip(it) }
                 }
                 if (scrollOffset > 0) {
                     Spacer(Modifier.height(8.dp))
@@ -1122,35 +1108,56 @@ private fun DredgePill(label: String, onClick: () -> Unit) {
 /**
  * The lading strip: while a package manager is hauling, a laden barge crosses a
  * braille waterline — steered by the manager's own percent when one is on screen,
- * patrolling when not — with the package under hand named beneath.
+ * patrolling when not — with the package under hand named beneath. The water only
+ * moves while cargo does: a quiet stretch stills it, and the ends are moored —
+ * docked at the far bank in gold ("cargo ashore"), or run aground in ember with
+ * the exit code.
  */
 @Composable
-private fun CargoStrip(item: String?, percent: Int?) {
-    val drift by rememberInfiniteTransition(label = "cargoWater").animateFloat(
-        initialValue = 0f,
-        targetValue = WATER_FRAMES.length.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(WATER_FRAMES.length * 260, easing = LinearEasing),
-        ),
-        label = "cargoDrift",
-    )
-    val patrol by rememberInfiniteTransition(label = "cargoPatrol").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4200, easing = LinearEasing),
-        ),
-        label = "cargoPatrolFrac",
-    )
-    val frac = percent?.let { it / 100f } ?: patrol
+private fun CargoStrip(view: CargoWatch.View) {
+    val moving = !view.still && view.phase == CargoWatch.Phase.SAILING
+    // The infinite transitions exist only while cargo is moving — a still strip
+    // must not keep the frame clock running.
+    val drift = if (moving) {
+        val d by rememberInfiniteTransition(label = "cargoWater").animateFloat(
+            initialValue = 0f,
+            targetValue = WATER_FRAMES.length.toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(WATER_FRAMES.length * 260, easing = LinearEasing),
+            ),
+            label = "cargoDrift",
+        )
+        d
+    } else 0f
+    val patrol = if (moving && view.percent == null) {
+        val p by rememberInfiniteTransition(label = "cargoPatrol").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(4200, easing = LinearEasing),
+            ),
+            label = "cargoPatrolFrac",
+        )
+        p
+    } else 0.5f
+    val aground = view.phase == CargoWatch.Phase.AGROUND
+    val ashore = view.phase == CargoWatch.Phase.ASHORE
+    val target = when {
+        ashore -> 1f
+        view.percent != null -> view.percent / 100f
+        else -> patrol
+    }
+    // The barge glides to each new percent rather than jumping cell to cell.
+    val frac by animateFloatAsState(target, tween(if (moving) 260 else 600), label = "bargeAt")
     val span = CARGO_WATER_WIDTH - BARGE.length
-    val bargeAt = (span * frac).toInt().coerceIn(0, span)
+    val bargeAt = (span * (if (view.percent == null && moving) patrol else frac)).toInt().coerceIn(0, span)
+    val hull = if (aground) Styx.ember else Styx.coin
     val water = buildAnnotatedString {
         for (i in 0 until CARGO_WATER_WIDTH) {
             if (i >= bargeAt && i < bargeAt + BARGE.length) {
-                withStyle(SpanStyle(color = Styx.coin)) { append(BARGE[i - bargeAt]) }
+                withStyle(SpanStyle(color = hull)) { append(BARGE[i - bargeAt]) }
             } else {
-                withStyle(SpanStyle(color = Styx.water.copy(alpha = 0.55f))) {
+                withStyle(SpanStyle(color = Styx.water.copy(alpha = if (moving) 0.55f else 0.3f))) {
                     append(WATER_FRAMES[(i + drift.toInt()) % WATER_FRAMES.length])
                 }
             }
@@ -1166,15 +1173,29 @@ private fun CargoStrip(item: String?, percent: Int?) {
         Text(water, fontFamily = CharonMono, fontSize = 13.sp, maxLines = 1)
         Spacer(Modifier.height(3.dp))
         val head = buildString {
-            append(if (percent == 100) "cargo ashore" else "lading the hold")
-            item?.let { append(" — ").append(it.take(28)) }
+            append(
+                when {
+                    ashore -> "cargo ashore"
+                    aground -> "ran aground"
+                    else -> "lading the hold"
+                },
+            )
+            view.item?.let { append(" — ").append(it.take(28)) }
         }
         val label = buildAnnotatedString {
-            withStyle(SpanStyle(color = Styx.mist)) { append(head) }
-            percent?.let {
-                append("  ")
-                withStyle(SpanStyle(color = Styx.coin, fontWeight = FontWeight.Medium)) {
-                    append("$it%")
+            withStyle(SpanStyle(color = if (aground) Styx.ember else Styx.mist)) { append(head) }
+            when {
+                aground && view.exit != null -> {
+                    append("  ")
+                    withStyle(SpanStyle(color = Styx.ember, fontWeight = FontWeight.Medium)) {
+                        append("exit ${view.exit}")
+                    }
+                }
+                view.percent != null && !aground -> {
+                    append("  ")
+                    withStyle(SpanStyle(color = Styx.coin, fontWeight = FontWeight.Medium)) {
+                        append("${view.percent}%")
+                    }
                 }
             }
         }

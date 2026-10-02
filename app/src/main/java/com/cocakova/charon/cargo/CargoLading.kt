@@ -76,6 +76,12 @@ object CargoLading {
         val item: String?,
         /** The freshest percent on screen (progress meters, apt fancy bar). */
         val percent: Int?,
+        /**
+         * Every row that bore cargo — a verb line, a pulse line, a percent. The
+         * watch compares these against the previous glean: only a row that wasn't
+         * there before is a sighting (see [CargoWatch]).
+         */
+        val rows: List<String> = emptyList(),
     )
 
     // Per-package verb lines the managers print, with the package as group 1.
@@ -111,20 +117,30 @@ object CargoLading {
         var verbSeen = false
         var item: String? = null
         var percent: Int? = null
+        val bearing = ArrayList<String>()
         for (row in rows) {
             if (row.isEmpty()) continue
+            var bears = false
             for (re in verbLines) {
                 val m = re.find(row) ?: continue
                 verbSeen = true
+                bears = true
                 item = m.groupValues[1].trimEnd(':', ',', '.')
                 break
             }
-            if (!verbSeen && pulseLines.any { it.containsMatchIn(row) }) verbSeen = true
+            if (!bears && pulseLines.any { it.containsMatchIn(row) }) {
+                verbSeen = true
+                bears = true
+            }
             percentRe.findAll(row).lastOrNull()?.let {
                 val p = it.groupValues[1].toInt()
-                if (p in 0..100) percent = p
+                if (p in 0..100) {
+                    percent = p
+                    bears = true
+                }
             }
+            if (bears) bearing += row
         }
-        return Glean(verbSeen, item, percent)
+        return Glean(verbSeen, item, percent, bearing)
     }
 }

@@ -2,6 +2,7 @@ package com.cocakova.charon.ssh
 
 import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.cargo.CargoLading
+import com.cocakova.charon.cargo.CargoWatch
 import com.cocakova.charon.terminal.ShellCwd
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
@@ -25,6 +26,8 @@ class TerminalSession(
     initialBg: Int = 0x000000,
     /** The livery's cursor colour; the renderer draws the block in it. */
     val cursorColor: Int = 0x3ECFB2,
+    /** Monotonic nanoseconds; tests hand in their own so timing is theirs to drive. */
+    private val clock: () -> Long = System::nanoTime,
 ) {
     val id: String = UUID.randomUUID().toString()
 
@@ -102,7 +105,11 @@ class TerminalSession(
                 _commandDraft.value = ""
                 selection.value = null
                 endToll()
-                _cargo.value = null
+                // The cargo, and whether this world's shell is rigged, stay behind
+                // in the world we just left.
+                cargoWatch.abandon()
+                rigged = false
+                publishCargo(clock())
                 // The shell that reported the cwd is not the one in front of us now —
                 // unless the new world spoke its own in this very burst (tmux on
                 // attach, or the outer shell's prompt as tmux lets go).
@@ -259,13 +266,20 @@ class TerminalSession(
             _cwd.value = it
         }
         term.onShellMark = { kind, extra ->
-            val now = System.nanoTime()
+            val now = clock()
             when (kind) {
                 'C' -> voyage?.startedAt = now
-                'D' -> voyage?.let { v ->
-                    voyage = null
-                    val durationMs = (now - (v.startedAt ?: v.submittedAt)) / 1_000_000
-                    onCommandDone?.invoke(v.command, extra, durationMs)
+                'D' -> {
+                    // The shell is back at a prompt: whatever was hauling cargo has
+                    // finished, and its exit code says whether it docked or ran aground.
+                    rigged = true
+                    cargoWatch.commandDone(extra, now)
+                    publishCargo(now)
+                    voyage?.let { v ->
+                        voyage = null
+                        val durationMs = (now - (v.startedAt ?: v.submittedAt)) / 1_000_000
+                        onCommandDone?.invoke(v.command, extra, durationMs)
+                    }
                 }
                 // A/B (prompt start/end) are accepted but carry no meaning yet —
                 // prompt-jump in scrollback will want them later.
@@ -295,22 +309,90 @@ class TerminalSession(
         _cwd.value = null
     }
 
-    // ---- The lading (package installs) -----------------------------------------------
-
-    data class Cargo(val manager: String, val since: Long = System.nanoTime())
-
-    private val _cargo = MutableStateFlow<Cargo?>(null)
-    /** Armed when a submitted command invokes a package manager; the UI gleans the
-     *  screen for its output grammar while this holds. */
-    val cargo: StateFlow<Cargo?> = _cargo
-
-    fun endCargo() {
-        _cargo.value = null
+    /**
+     * The transport dropped (or is being redialed): the shell that reported the
+     * cwd, ran the voyage and hauled the cargo went down with it. The redialed
+     * shell sounds its own.
+     */
+    fun transportDropped() {
+        forgetCwd()
+        synchronized(lock) {
+            rigged = false
+            voyage = null
+        }
+        endCargo()
     }
 
-    /** The bottom [n] rows of the live screen as plain text (the cargo glean). */
-    fun tailText(n: Int): List<String> = synchronized(lock) {
-        ((term.rows - n).coerceAtLeast(0) until term.rows).map { term.screen.line(it).toText() }
+    // ---- The lading (package installs) -----------------------------------------------
+    // A submitted command that invokes a package manager arms the watch; while the UI
+    // shows this session it ticks [cargoTick], which gleans the bottom rows whenever
+    // new output has landed. Every end — the command finishing, ^C, the alternate
+    // screen, the transport dropping — goes through [CargoWatch], so none of them can
+    // leave the barge out on the water.
+
+    private val cargoWatch = CargoWatch()
+
+    private val _cargo = MutableStateFlow<CargoWatch.View?>(null)
+    /** What the lading strip shows right now; null = no strip. */
+    val cargo: StateFlow<CargoWatch.View?> = _cargo
+
+    private val _cargoAwake = MutableStateFlow(false)
+    /** True while the watch has anything left to show — the UI ticks only then. */
+    val cargoAwake: StateFlow<Boolean> = _cargoAwake
+
+    /** The package manager under watch, or null. */
+    val cargoManager: String? get() = synchronized(lock) { cargoWatch.manager }
+
+    /** [outputTick] at the last glean: no new bytes, nothing new to read. */
+    private var cargoGleanTick = -1L
+
+    /** This world's shell reports its commands finishing (an OSC 133 D was seen). */
+    private var rigged = false
+
+    /**
+     * One beat of the lading, called by the UI every ~200 ms while [cargoAwake]:
+     * glean the tail if output arrived since the last beat, let time pass, publish.
+     * Returns whether to keep ticking.
+     */
+    fun cargoTick(now: Long = clock()): Boolean = synchronized(lock) {
+        if (cargoWatch.armed) {
+            val tick = outputTick.value
+            if (tick != cargoGleanTick) {
+                cargoGleanTick = tick
+                cargoWatch.glean(CargoLading.glean(tailText(CARGO_TAIL_ROWS)), now)
+            }
+        }
+        cargoWatch.voyageRunning = rigged && voyage != null
+        cargoWatch.tick(now)
+        publishCargo(now)
+        cargoWatch.awake(now)
+    }
+
+    /** The barge goes, whatever it was doing (a dropped transport, a redial). */
+    fun endCargo() {
+        synchronized(lock) {
+            cargoWatch.abandon()
+            publishCargo(clock())
+        }
+    }
+
+    private fun publishCargo(now: Long) {
+        _cargo.value = cargoWatch.view(now)
+        _cargoAwake.value = cargoWatch.awake(now)
+    }
+
+    /**
+     * The live edge as plain text (the cargo glean), under [lock]: the [n] rows
+     * ending at the cursor — where output is landing, even on a screen cleared just
+     * before — plus the bottom row, where apt pins its progress bar.
+     */
+    private fun tailText(n: Int): List<String> {
+        val end = term.cursorY.coerceIn(0, term.rows - 1)
+        val rows = ((end - n + 1).coerceAtLeast(0)..end).mapTo(ArrayList(n + 1)) {
+            term.screen.line(it).toText()
+        }
+        if (end < term.rows - 1) rows += term.screen.line(term.rows - 1).toText()
+        return rows
     }
 
     // ---- Command-line tracking (smart autofill) ------------------------------------
@@ -348,7 +430,7 @@ class TerminalSession(
                     if (!wasAltScreen) _cwd.value = null   // the next rigged prompt re-sounds it
                     i++
                 }
-                c == '\u0003' -> { resetLine(); _cargo.value = null; voyage = null; i++ } // ^C sinks lading + voyage
+                c == '\u0003' -> { resetLine(); abandonCargo(); voyage = null; i++ } // ^C sinks lading + voyage
                 c == '\u0015' -> { resetLine(); i++ }                      // ^U
                 c == '\u0017' -> { deleteWord(); i++ }                     // ^W
                 c == '\u007f' || c == '\b' -> {
@@ -376,7 +458,7 @@ class TerminalSession(
             val c = sent[i]
             when {
                 c == '\r' || c == '\n' -> { _toll.value = TollPhase.PAID; resetLine(); i++ }
-                c == '\u0003' -> { endToll(); resetLine(); _cargo.value = null; i++ } // rite abandoned
+                c == '\u0003' -> { endToll(); resetLine(); abandonCargo(); i++ } // rite abandoned
                 c == '\u007f' || c == '\b' -> {
                     if (_tollPulse.value > 0) _tollPulse.value--
                     i++
@@ -396,11 +478,35 @@ class TerminalSession(
             val cmd = lineBuf.toString().trim()
             if (cmd.isNotEmpty()) {
                 onCommandSubmitted?.invoke(cmd)
-                CargoLading.match(cmd)?.let { _cargo.value = Cargo(it) }
-                voyage = Voyage(cmd, System.nanoTime())
+                watchCargo(cmd)
+                voyage = Voyage(cmd, clock())
             }
         }
         resetLine()
+    }
+
+    /** A line went to the shell: arm the lading for a package manager, or let a
+     *  finished one go. What is already on screen is seen, not sighted. */
+    private fun watchCargo(cmd: String) {
+        synchronized(lock) {
+            val now = clock()
+            val manager = CargoLading.match(cmd)
+            if (manager != null) {
+                cargoWatch.arm(manager, now)
+                cargoWatch.glean(CargoLading.glean(tailText(CARGO_TAIL_ROWS)), now, seedOnly = true)
+                cargoGleanTick = outputTick.value
+            } else {
+                cargoWatch.lineSubmitted(cmd, now)
+            }
+            publishCargo(now)
+        }
+    }
+
+    private fun abandonCargo() {
+        synchronized(lock) {
+            cargoWatch.abandon()
+            publishCargo(clock())
+        }
     }
 
     private fun resetLine() {
@@ -571,5 +677,10 @@ class TerminalSession(
             dims.value = cols to rows
         }
         if (any) onResize?.invoke(cols, rows, cols * cellWidthPx, rows * cellHeightPx)
+    }
+
+    private companion object {
+        /** How many bottom rows the lading reads. */
+        const val CARGO_TAIL_ROWS = 8
     }
 }

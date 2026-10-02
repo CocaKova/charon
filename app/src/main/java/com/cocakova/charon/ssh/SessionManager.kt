@@ -270,9 +270,10 @@ class SessionManager(
                         ms.remote?.refreshHost()
                     }
                     is TerminalSession.State.Disconnected -> {
-                        // The shell that reported a working directory died with the
-                        // transport; the redialed one will sound its own.
-                        ms.session.forgetCwd()
+                        // The shell that reported a working directory, ran the voyage
+                        // and hauled the cargo died with the transport; the redialed
+                        // one will sound its own.
+                        ms.session.transportDropped()
                         // The channels died with the transport; drop the handles so a
                         // redial can chart them fresh.
                         dropForwards(ms)

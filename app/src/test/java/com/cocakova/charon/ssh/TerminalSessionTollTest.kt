@@ -31,7 +31,7 @@ class TerminalSessionTollTest {
         session.feed("sudo apt install moonlight-qt\r\n[sudo] password for jonny: ")
 
         assertEquals(TerminalSession.TollPhase.ASKED, session.toll.value)
-        assertEquals("apt", session.cargo.value?.manager)
+        assertEquals("apt", session.cargoManager)
 
         session.trackInput("hunter2")
         assertEquals("", session.commandDraft.value)
