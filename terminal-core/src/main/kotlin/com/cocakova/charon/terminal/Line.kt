@@ -170,6 +170,20 @@ class Line(cols: Int) {
         combining = remapped
     }
 
+    /**
+     * Nothing here at all: spaces in the default pen, no marks, no shades, no ext.
+     * A row painted with a background colour (BCE) is not blank — it is a drawing.
+     */
+    fun isBlank(): Boolean {
+        if (apparitions != null || combining?.isNotEmpty() == true) return false
+        for (c in 0 until cols) {
+            if (codePoints[c] != SPACE || attrs[c] != CellAttrs.DEFAULT) return false
+        }
+        val e = ext ?: return true
+        for (v in e) if (v != 0L) return false
+        return true
+    }
+
     /** Plain-text content, trailing spaces trimmed (for tests/selection/goldens). */
     fun toText(): String = buildString {
         for (c in 0 until cols) {

@@ -552,7 +552,16 @@ class TerminalSession(
             val grid = term.cols != cols || term.rows != rows
             term.cellWidthPx = cellWidthPx
             term.cellHeightPx = cellHeightPx
-            if (grid) term.resize(cols, rows)
+            if (grid) {
+                term.resize(cols, rows)
+                // The toll is pinned to its prompt's row, and a shrink carries that
+                // row up the glass with the cursor (the keyboard rising to type the
+                // password): follow it, or the next byte would read as "moved on".
+                if (_toll.value != null && !term.usingAlt) {
+                    tollRow = term.cursorY
+                    tollPrompt = term.screen.line(tollRow).toText()
+                }
+            }
             c to grid
         }
         val (any, grid) = changed

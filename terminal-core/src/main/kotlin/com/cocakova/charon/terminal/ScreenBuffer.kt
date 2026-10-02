@@ -77,26 +77,94 @@ class ScreenBuffer(
         }
     }
 
-    /** Resize without reflow: truncate/pad columns, drop/add rows at the bottom. */
-    fun resize(newCols: Int, newRows: Int) {
+    /**
+     * Rows a height-shrink pushed over the top into scrollback and a later grow has
+     * not yet pulled back. The phone's keyboard rising and falling is a shrink and a
+     * grow of the same height: paying the debt back on the grow puts the screen you
+     * were reading back exactly where it was. A clear (ED 2/3) forgives it — history
+     * must not drop back above a screen you just wiped.
+     */
+    private var resizeDebt = 0
+
+    /**
+     * Resize without reflow. Columns truncate or pad. Rows, when [cursorRow] is given
+     * and this buffer keeps history (the primary screen):
+     *
+     *  - **shrinking** keeps the cursor's line on the glass. Blank rows below the
+     *    cursor go first; then lines leave over the top into scrollback, exactly as
+     *    if the screen had scrolled; only content below the cursor that still can't
+     *    fit is dropped. The keyboard rising no longer eats the prompt.
+     *  - **growing** first pulls back what a shrink pushed into history, then adds
+     *    blank rows at the bottom.
+     *
+     * Returns how many rows the content moved up (negative = down), so the caller
+     * carries the cursor with its text. A buffer without history (the alternate
+     * screen, whose program redraws on SIGWINCH anyway) keeps its top rows.
+     */
+    fun resize(newCols: Int, newRows: Int, cursorRow: Int = -1): Int {
         if (newCols != cols) {
             for (l in lines) l.resize(newCols)
             for (l in scrollback) l.resize(newCols)
             cols = newCols
         }
-        if (newRows != rows) {
+        if (newRows == rows) return 0
+        val anchored = cursorRow >= 0 && maxScrollback > 0
+        if (!anchored) {
             val newLines = Array(newRows) { r -> if (r < rows) lines[r] else Line(cols) }
             lines = newLines
             rows = newRows
+            return 0
         }
+        val cursor = cursorRow.coerceIn(0, rows - 1)
+        return if (newRows < rows) shrinkAround(newRows, cursor) else growBack(newRows)
+    }
+
+    private fun shrinkAround(newRows: Int, cursor: Int): Int {
+        val excess = rows - newRows
+        var trailingBlank = 0
+        var r = rows - 1
+        while (trailingBlank < excess && r > cursor && lines[r].isBlank()) {
+            trailingBlank++
+            r--
+        }
+        val remaining = excess - trailingBlank
+        // Never push the cursor's own line away; whatever still can't fit after that
+        // sits below the cursor, and is the one thing a shrink may drop.
+        val pushTop = minOf(remaining, cursor)
+        for (i in 0 until pushTop) pushScrollback(lines[i])
+        val old = lines
+        lines = Array(newRows) { old[pushTop + it] }
+        rows = newRows
+        resizeDebt = (resizeDebt + pushTop).coerceAtMost(scrollback.size)
+        return pushTop
+    }
+
+    private fun growBack(newRows: Int): Int {
+        val extra = newRows - rows
+        val pull = minOf(extra, resizeDebt, scrollback.size)
+        val pulled = ArrayList<Line>(pull)
+        repeat(pull) { pulled.add(0, scrollback.removeLast()) }
+        resizeDebt -= pull
+        val old = lines
+        lines = Array(newRows) { i ->
+            when {
+                i < pull -> pulled[i]
+                i - pull < old.size -> old[i - pull]
+                else -> Line(cols)
+            }
+        }
+        rows = newRows
+        return -pull
     }
 
     fun clearAll(fillAttr: Long) {
         for (l in lines) l.clear(fillAttr)
+        resizeDebt = 0
     }
 
     fun clearScrollback() {
         scrollback.clear()
+        resizeDebt = 0
     }
 
     /** Every line we still hold, history first. Used to sweep anchored apparitions. */

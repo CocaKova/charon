@@ -112,4 +112,18 @@ class TerminalSessionTollTest {
         session.feed("l")
         assertEquals(0L, session.echoPending)
     }
+
+    @Test
+    fun theKeyboardRisingOverAPasswordPromptKeepsTheToll() {
+        val session = TerminalSession("t", cols = 40, rows = 10)
+        val lines = (1..9).joinToString("") { "line $it\r\n" }
+        session.feed(lines + "[sudo] password for jonny: ")
+        assertEquals(TerminalSession.TollPhase.ASKED, session.toll.value)
+        // The keyboard rises: the grid shrinks and the prompt line rides up the glass.
+        session.resize(40, 5, 8, 16)
+        session.feed(Char(0x07).toString())   // any byte at all re-checks the toll
+        assertEquals(TerminalSession.TollPhase.ASKED, session.toll.value)
+        session.trackInput("hunter2")
+        assertEquals("", session.commandDraft.value)
+    }
 }

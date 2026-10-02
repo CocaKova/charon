@@ -517,7 +517,12 @@ class TerminalEmulator(
 
     fun resize(newCols: Int, newRows: Int) {
         if (newCols == cols && newRows == rows) return
-        primary.resize(newCols, newRows)
+        // The primary screen keeps its cursor's line on the glass: a shrink sends
+        // lines over the top into scrollback instead of cutting the prompt off the
+        // bottom (the keyboard rising on a bare shell). While a TUI holds the
+        // alternate screen, the primary's cursor is the one 1049 saved for it.
+        val primaryCursor = if (usingAlt) savedPrimary.y else cursorY
+        val shift = primary.resize(newCols, newRows, primaryCursor)
         alt.resize(newCols, newRows)
         val oldCols = cols
         cols = newCols
@@ -525,6 +530,8 @@ class TerminalEmulator(
         scrollTop = 0
         scrollBottom = rows - 1
         if (newCols != oldCols) tabStops = defaultTabStops(newCols)
+        if (!usingAlt) cursorY -= shift
+        savedPrimary.y = (savedPrimary.y - shift).coerceAtLeast(0)
         cursorX = cursorX.coerceIn(0, cols - 1)
         cursorY = cursorY.coerceIn(0, rows - 1)
         pendingWrap = false

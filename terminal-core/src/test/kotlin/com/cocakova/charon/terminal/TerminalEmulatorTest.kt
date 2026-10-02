@@ -502,11 +502,12 @@ class TerminalEmulatorTest {
     }
 
     @Test
-    fun resizeTruncatesAndClampsCursor() {
+    fun resizeTruncatesColumnsAndKeepsTheCursorLine() {
         val r = Rig(cols = 10, rows = 5)
         r.feed("0123456789$E[5;10H")
         r.term.resize(6, 3)
-        assertEquals("012345", r.row(0))
+        // The cursor's row stays on the glass; the top rows left into scrollback.
+        assertEquals("012345", r.term.primary.scrollbackLine(0).toText())
         assertEquals(5, r.term.cursorX)
         assertEquals(2, r.term.cursorY)
     }
