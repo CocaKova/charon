@@ -24,11 +24,11 @@
 |                                        │
 |[0] 0:bash*                                         "devbox-123" 16:29 13-Jul-26
 # row attr+text checksums
-00 3bf2c603
+00 4958825f
 01 24c9a8d9
 02 25c40119
-03 217f4e70
-04 e1f0fb73
+03 53d50a2c
+04 971ab0f7
 05 435b572a
 06 435b572a
 07 435b572a
@@ -47,4 +47,4 @@
 20 f74dbd9b
 21 f74dbd9b
 22 f74dbd9b
-23 2ecfde1b
+23 076c39e5
