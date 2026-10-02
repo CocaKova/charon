@@ -63,14 +63,20 @@ fun HostEditSheet(
     onCross: (HostDraft) -> Unit,
     onSaveAndCross: (HostDraft) -> Unit,
     onDelete: (String) -> Unit,
+    /** Moor without crossing — offered when mooring a crossing that came home. */
+    onSaveOnly: ((HostDraft) -> Unit)? = null,
 ) {
     val existing = (target as? EditTarget.Existing)?.host
-    var name by rememberSaveable(target) { mutableStateOf(existing?.name ?: "") }
-    var host by rememberSaveable(target) { mutableStateOf(existing?.host ?: "") }
-    var port by rememberSaveable(target) { mutableStateOf(existing?.port?.toString() ?: "22") }
-    var username by rememberSaveable(target) { mutableStateOf(existing?.username ?: "") }
-    var password by rememberSaveable(target) { mutableStateOf("") }
-    var identityId by rememberSaveable(target) { mutableStateOf(existing?.identityId) }
+    val seed = (target as? EditTarget.Prefilled)?.draft
+    var name by rememberSaveable(target) { mutableStateOf(existing?.name ?: seed?.name ?: "") }
+    var host by rememberSaveable(target) { mutableStateOf(existing?.host ?: seed?.host ?: "") }
+    var port by rememberSaveable(target) {
+        mutableStateOf(existing?.port?.toString() ?: seed?.port?.toString() ?: "22")
+    }
+    var username by rememberSaveable(target) { mutableStateOf(existing?.username ?: seed?.username ?: "") }
+    // Not saveable: a password never goes into the saved-instance bundle.
+    var password by remember(target) { mutableStateOf(seed?.password ?: "") }
+    var identityId by rememberSaveable(target) { mutableStateOf(existing?.identityId ?: seed?.identityId) }
     var harbor by rememberSaveable(target) { mutableStateOf(existing?.harbor ?: "") }
     var harborMenu by remember { mutableStateOf(false) }
     var colorHex by rememberSaveable(target) { mutableStateOf(existing?.colorHex) }
@@ -107,7 +113,11 @@ fun HostEditSheet(
                 .padding(bottom = 28.dp),
         ) {
             Text(
-                if (existing == null) "new crossing" else "edit mooring",
+                when {
+                    existing != null -> "edit mooring"
+                    seed != null -> "moor this crossing"
+                    else -> "new crossing"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -248,16 +258,29 @@ fun HostEditSheet(
 
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
-                    onClick = { onCross(draft()) },
-                    enabled = ready,
-                    modifier = Modifier.weight(1f),
-                ) { Text("cross") }
-                Button(
-                    onClick = { onSaveAndCross(draft()) },
-                    enabled = ready,
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (existing == null) "save & cross" else "update & cross") }
+                if (seed != null && onSaveOnly != null) {
+                    OutlinedButton(
+                        onClick = { onSaveAndCross(draft()) },
+                        enabled = ready,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("moor & cross") }
+                    Button(
+                        onClick = { onSaveOnly(draft()) },
+                        enabled = ready,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("moor it") }
+                } else {
+                    OutlinedButton(
+                        onClick = { onCross(draft()) },
+                        enabled = ready,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("cross") }
+                    Button(
+                        onClick = { onSaveAndCross(draft()) },
+                        enabled = ready,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(if (existing == null) "save & cross" else "update & cross") }
+                }
             }
             if (existing != null) {
                 Spacer(Modifier.height(8.dp))

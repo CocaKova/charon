@@ -53,6 +53,8 @@ class SessionManager(
         val session: TerminalSession,
         val config: ConnectConfig,
         val hostId: String?,
+        /** A crossing with no mooring (a hail): what the Dock offers to moor after. */
+        val unmoored: MooringOffer?,
     ) {
         @Volatile var connection: SshConnection? = null
         @Volatile var closed: Boolean = false
@@ -83,6 +85,16 @@ class SessionManager(
 
     /** Set while the ferryman waits on a trust decision; the UI resolves it. */
     val pendingTrust = MutableStateFlow<PendingTrust?>(null)
+
+    /**
+     * An unmoored crossing that has come home — the Dock offers, once, to moor it.
+     * Memory only: dismissing it (or the process ending) forgets it entirely.
+     */
+    val mooringOffer = MutableStateFlow<MooringOffer?>(null)
+
+    fun dismissMooringOffer() {
+        mooringOffer.value = null
+    }
 
     private val verifier = KnownHostsVerifier(knownHostDao) { request ->
         // Called on a connect thread: park it until the user decides.
@@ -147,7 +159,7 @@ class SessionManager(
         }
     }
 
-    fun connect(config: ConnectConfig, hostId: String? = null) {
+    fun connect(config: ConnectConfig, hostId: String? = null, unmoored: MooringOffer? = null) {
         // The livery chosen at the helm; each crossing wears what was set when it
         // cast off — a change takes hold from the next crossing, like the helm says.
         // Hand-crafted liveries (an obol privilege) are searched after the curated
@@ -164,7 +176,7 @@ class SessionManager(
             initialBg = scheme.bg,
             cursorColor = scheme.cursor,
         )
-        val ms = Managed(session, config, hostId)
+        val ms = Managed(session, config, hostId, unmoored.takeIf { hostId == null })
         ms.remote = RemoteContext(scope) { cmd -> ms.connection?.exec(cmd) }
         // Only genuine command lines reach the shared history: a sentence typed into
         // a chat or REPL running on the host must never resurface as autofill.
@@ -205,6 +217,9 @@ class SessionManager(
     fun close(id: String) {
         val ms = managed.remove(id) ?: return
         ms.closed = true
+        // A hail that actually crossed came home: offer to moor it (never one that
+        // never stood up — a typo'd host isn't worth a mooring).
+        if (ms.everConnected) ms.unmoored?.let { mooringOffer.value = it }
         ms.reconnectJob?.cancel()
         ms.watchJob?.cancel()
         dropForwards(ms)
@@ -427,4 +442,22 @@ class SessionManager(
     }
 
     private fun displayLabel(config: ConnectConfig) = "${config.username}@${config.host}"
+}
+
+/**
+ * What a hailed crossing leaves behind for the Dock's "moor it": where it went and
+ * who crossed. The password rides along only so mooring it doesn't mean typing it
+ * again; it lives in memory, and only until the offer is taken or let drift.
+ */
+data class MooringOffer(
+    val host: String,
+    val port: Int,
+    val username: String,
+    val identityId: String?,
+    val password: String?,
+) {
+    val address: String
+        get() = "$username@" + (if (':' in host) "[$host]" else host) + if (port != 22) ":$port" else ""
+
+    override fun toString(): String = "MooringOffer($address)" // never the password
 }

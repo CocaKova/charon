@@ -54,13 +54,15 @@ class PendingTrust(val request: TrustRequest) {
  */
 class KnownHostsVerifier(
     private val dao: KnownHostDao,
+    /** OpenSSH fingerprint of a key's wire blob; swappable so the ledger is JVM-testable. */
+    private val fingerprintOf: (ByteArray) -> String = { sha256Fingerprint(it) },
     private val requestDecision: (TrustRequest) -> Boolean,
 ) : HostKeyVerifier {
 
     override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
         val keyType = KeyType.fromKey(key).toString()
         val wire = Buffer.PlainBuffer().putPublicKey(key).compactData
-        val fingerprint = sha256Fingerprint(wire)
+        val fingerprint = fingerprintOf(wire)
         val known = runBlocking { dao.find(hostname, port, keyType) }
         return when {
             known == null ->

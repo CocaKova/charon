@@ -39,7 +39,9 @@ import com.cocakova.charon.presentation.dock.TrustGate
 import com.cocakova.charon.presentation.sftp.FilesScreen
 import com.cocakova.charon.presentation.terminal.TerminalScreen
 import com.cocakova.charon.service.AppVisibility
+import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.ssh.ConnectConfig
+import com.cocakova.charon.ssh.MooringOffer
 import com.cocakova.charon.ssh.SessionManager
 import com.cocakova.charon.ssh.SftpTransfers
 import com.cocakova.charon.theme.CharonTheme
@@ -147,6 +149,7 @@ private fun CharonRoot(
     val sessions by sessionManager.sessions.collectAsState()
     val error by sessionManager.lastError.collectAsState()
     val pendingTrust by sessionManager.pendingTrust.collectAsState()
+    val mooringOffer by sessionManager.mooringOffer.collectAsState()
     val hosts by hostVault.hosts.collectAsState(initial = emptyList())
     val identities by keyVault.identities.collectAsState(initial = emptyList())
     val allSnippets by snippetDao.all().collectAsState(initial = emptyList())
@@ -243,13 +246,32 @@ private fun CharonRoot(
                 },
                 onQuickConnect = { draft ->
                     // draftConfig folds in stored-password fallback and identity
-                    // resolution; null = biometric prompt dismissed.
+                    // resolution; null = biometric prompt dismissed. A draft with no
+                    // id crosses unmoored, and comes home with an offer to moor it.
                     scope.launch {
                         hostVault.draftConfig(draft)?.let {
-                            sessionManager.connect(it, hostId = draft.id)
+                            sessionManager.connect(
+                                it, hostId = draft.id,
+                                unmoored = draft.toOffer().takeIf { draft.id == null },
+                            )
                         }
                     }
                 },
+                onHail = { draft ->
+                    scope.launch {
+                        hostVault.draftConfig(draft)?.let {
+                            sessionManager.connect(it, hostId = null, unmoored = draft.toOffer())
+                        }
+                    }
+                },
+                mooringOffer = mooringOffer?.takeIf { offer ->
+                    // Already moored (by hand, meanwhile): nothing to offer.
+                    hosts.none { h ->
+                        h.host.equals(offer.host, ignoreCase = true) && h.port == offer.port &&
+                            h.username == offer.username
+                    }
+                },
+                onDismissMooringOffer = { sessionManager.dismissMooringOffer() },
                 onSave = { draft -> scope.launch { hostVault.save(draft) } },
                 onDelete = { id -> scope.launch { hostVault.delete(id) } },
                 onForgeKey = { name, bio -> keyVault.forge(name, bio) },
@@ -336,3 +358,12 @@ private fun BiometricGate(keyVault: KeyVault) {
         prompt.authenticate(info, BiometricPrompt.CryptoObject(p.cipher))
     }
 }
+
+/** What a hailed crossing leaves for the Dock's "moor it". */
+private fun HostDraft.toOffer() = MooringOffer(
+    host = host.trim(),
+    port = port,
+    username = username.trim(),
+    identityId = identityId,
+    password = password.ifEmpty { null },
+)

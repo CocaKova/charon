@@ -75,6 +75,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.db.HostEntity
 import com.cocakova.charon.data.repository.HostDraft
+import com.cocakova.charon.fleet.HailTarget
+import com.cocakova.charon.ssh.MooringOffer
 import com.cocakova.charon.fleet.Reach
 import com.cocakova.charon.fleet.Sounding
 import com.cocakova.charon.theme.Styx
@@ -115,9 +117,15 @@ fun DockScreen(
     onAddMoorings: (List<HostDraft>) -> Unit,
     historyCount: Int = 0,
     onClearHistory: () -> Unit = {},
+    /** An unmoored crossing that came home, offered once for mooring. */
+    mooringOffer: MooringOffer? = null,
+    onDismissMooringOffer: () -> Unit = {},
+    /** Cross without mooring: a hail from the Dock's line (or an ssh:// link). */
+    onHail: (HostDraft) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
+    var hailing by remember { mutableStateOf<HailTarget?>(null) }
     val haptic = LocalHapticFeedback.current
 
     var showKeys by remember { mutableStateOf(false) }
@@ -235,6 +243,24 @@ fun DockScreen(
             Spacer(Modifier.height(8.dp))
         }
 
+        // An unmoored crossing came home: one quiet offer to moor it.
+        mooringOffer?.let { offer ->
+            MooringOfferRow(
+                offer = offer,
+                onMoor = { editing = EditTarget.Prefilled(offer.toDraft()) },
+                onDrift = onDismissMooringOffer,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+        // The hail line: cross to a shore you haven't moored.
+        HailBar(
+            enabled = !connecting,
+            onHail = { hailing = it },
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+
         // Search only earns its keep once the fleet grows — below that it's clutter.
         if (hosts.size > 4) {
             OutlinedTextField(
@@ -345,7 +371,13 @@ fun DockScreen(
             onSaveAndCross = { draft ->
                 editing = null
                 onSave(draft)
+                if (target is EditTarget.Prefilled) onDismissMooringOffer()
                 onQuickConnect(draft)
+            },
+            onSaveOnly = { draft ->
+                editing = null
+                onSave(draft)
+                onDismissMooringOffer()
             },
             onDelete = { id ->
                 editing = null
@@ -389,6 +421,18 @@ fun DockScreen(
         )
     }
 
+    hailing?.let { target ->
+        HailSheet(
+            target = target,
+            identities = identities,
+            onDismiss = { hailing = null },
+            onCross = { draft ->
+                hailing = null
+                onHail(draft)
+            },
+        )
+    }
+
     quickActions?.let { host ->
         QuickActionsSheet(
             host = host,
@@ -407,7 +451,20 @@ fun DockScreen(
 sealed class EditTarget {
     data object New : EditTarget()
     data class Existing(val host: HostEntity) : EditTarget()
+    /** A new mooring filled in from a crossing that came home unmoored. */
+    data class Prefilled(val draft: HostDraft) : EditTarget()
 }
+
+/** The offer, as the edit sheet's starting draft. */
+private fun MooringOffer.toDraft() = HostDraft(
+    id = null,
+    name = "",
+    host = host,
+    port = port,
+    username = username,
+    password = password ?: "",
+    identityId = identityId,
+)
 
 /**
  * Lantern hues a mooring can fly — a small, curated set so the Dock stays a
