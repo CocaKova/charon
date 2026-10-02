@@ -18,7 +18,7 @@ class TailscaleImportTest {
             "HostName": "phone",
             "DNSName": "phone.tail1234.ts.net.",
             "OS": "android",
-            "TailscaleIPs": ["100.101.102.103", "fd7a::1"],
+            "TailscaleIPs": ["100.99.88.77", "fd7a::1"],
             "Online": true
           },
           "Peer": {
@@ -54,7 +54,7 @@ class TailscaleImportTest {
     fun `parses peers, never self`() {
         val fleet = TailscaleImport.parse(status)
         assertEquals(3, fleet.size)
-        assertTrue(fleet.none { it.name == "phone" || it.host == "100.101.102.103" })
+        assertTrue(fleet.none { it.name == "phone" || it.host == "100.99.88.77" })
     }
 
     @Test

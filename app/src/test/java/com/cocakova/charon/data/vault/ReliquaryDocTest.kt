@@ -18,7 +18,7 @@ class ReliquaryDocTest {
             appVersion = "0.9.0",
             hosts = listOf(
                 RHost(
-                    id = "h1", name = "silas", host = "192.168.1.253", port = 2222,
+                    id = "h1", name = "devbox", host = "192.168.1.253", port = 2222,
                     username = "devuser1", password = "hunter2", identityId = "i1",
                     harbor = "spark", colorHex = "#3ECFB2", startupCommand = "tmux new -As main",
                     autoReconnect = true, lastConnectedAt = 5, createdAt = 1, lastModified = 9,

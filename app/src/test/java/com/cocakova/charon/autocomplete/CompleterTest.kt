@@ -150,8 +150,8 @@ class CompleterTest {
         assertTrue(out.none { "*" in it.display }) // config patterns never offered
 
         // user@ keeps the traveller's own half and matches the host past the @.
-        val at = Completer.complete("ssh jonny@bl", emptyList(), rc)
-        assertTrue(at.any { it.display == "jonny@blackpearl" && it.insert == "ackpearl " })
+        val at = Completer.complete("ssh user@bl", emptyList(), rc)
+        assertTrue(at.any { it.display == "user@blackpearl" && it.insert == "ackpearl " })
     }
 
     @Test
@@ -162,7 +162,7 @@ class CompleterTest {
         rc.version.first { it >= 1 }
 
         val history = listOf("ssh user@100.101.102.103 -p 22")
-        val out = Completer.complete("ssh co", history, rc)
+        val out = Completer.complete("ssh us", history, rc)
         assertTrue(out.any { it.display == "ssh user@100.101.102.103 -p 22" })
     }
 

@@ -122,7 +122,7 @@ Dependency spine: 0.1 → 0.2 → 0.3 → 0.4 ∥ 0.5 → 0.6 ∥ 0.7 → 0.8 �
 ## Verification
 
 - **terminal-core**: JVM test suite on the Spark (`./gradlew :terminal-core:test`) — control-function units, corpus goldens (recorded vim/htop/tmux byte streams), fuzz totality, throughput benchmark
-- **App**: `source ~/android-buildenv/env.sh && ./gradlew :app:assembleDebug`; install on phone via `adb connect 100.101.102.103` (never drive the screen while Jonny's using it); each milestone's demo gate above is the acceptance test, against the Spark itself as the SSH target
+- **App**: `source ~/android-buildenv/env.sh && ./gradlew :app:assembleDebug`; install on phone via `adb connect <phone-tailnet-ip>` (never drive the screen while Jonny's using it); each milestone's demo gate above is the acceptance test, against the Spark itself as the SSH target
 - **v1.0 gate**: vttest/esctest checklist in `docs/TERMINAL.md`, flood benchmark on device, 10-minute-background session survival
 
 ## Deferred decisions (Jonny's, non-blocking now)
