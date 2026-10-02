@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.cocakova.charon.presentation.components.BrailleSpinner
 import com.cocakova.charon.ssh.RemoteEntry
 import com.cocakova.charon.theme.Styx
 import java.io.ByteArrayOutputStream
@@ -146,9 +148,25 @@ internal fun ScrollReader(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPull: () -> Unit,
+    /** Write the edited text back whole; null = this scroll can't be edited here. */
+    onSave: ((String) -> Unit)? = null,
 ) {
     val markdown = isMarkdown(entry)
     var rendered by remember(entry.path) { mutableStateOf(markdown) }
+    // Editing in place: only a scroll that came aboard whole, as clean UTF-8, and
+    // small enough to write back in one stroke.
+    val editable = onSave != null && content is ScrollContent.Read && !content.truncated &&
+        content.bytes <= HoldOrder.MAX_EDIT_BYTES && '\uFFFD' !in content.text
+    var draft by remember(entry.path, content) { mutableStateOf<String?>(null) }
+    var dropArmed by remember(entry.path) { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = draft != null) {
+        val original = (content as? ScrollContent.Read)?.text
+        if (draft == original || dropArmed) {
+            draft = null; dropArmed = false
+        } else {
+            dropArmed = true
+        }
+    }
 
     Column(
         Modifier
@@ -186,7 +204,18 @@ internal fun ScrollReader(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (markdown && content is ScrollContent.Read) {
+            if (draft != null) {
+                BarAction(
+                    label = if (dropArmed) "drop edits?" else "save",
+                    onClick = {
+                        if (dropArmed) { draft = null; dropArmed = false } else { onSave?.invoke(draft!!); draft = null }
+                    },
+                    tint = if (dropArmed) Styx.ember else Styx.coin,
+                )
+            } else if (editable) {
+                BarAction("edit", { draft = (content as ScrollContent.Read).text; rendered = false }, tint = Styx.water)
+            }
+            if (markdown && content is ScrollContent.Read && draft == null) {
                 BarAction(
                     label = if (rendered) "raw" else "read",
                     onClick = { rendered = !rendered },
@@ -200,7 +229,7 @@ internal fun ScrollReader(
         Box(Modifier.weight(1f)) {
             when (content) {
                 ScrollContent.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Styx.water)
+                    BrailleSpinner(color = Styx.water, style = MaterialTheme.typography.headlineSmall, label = "drawing the scroll aboard")
                 }
                 is ScrollContent.Refused -> Column(
                     Modifier.fillMaxSize().padding(horizontal = 32.dp),
@@ -219,8 +248,11 @@ internal fun ScrollReader(
                         Button(onClick = onPull) { Text("carry ashore") }
                     }
                 }
-                is ScrollContent.Read ->
-                    if (rendered) RenderedScroll(content) else RawScroll(content)
+                is ScrollContent.Read -> when {
+                    draft != null -> EditScroll(draft!!) { draft = it; dropArmed = false }
+                    rendered -> RenderedScroll(content)
+                    else -> RawScroll(content)
+                }
             }
         }
     }
@@ -374,5 +406,26 @@ private fun TruncationNote() {
         style = MaterialTheme.typography.bodySmall,
         color = Styx.coin,
         modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 6.dp),
+    )
+}
+
+/** The scroll as an editable sheet: the terminal's mono, a teal caret, nothing hidden. */
+@Composable
+private fun EditScroll(text: String, onChange: (String) -> Unit) {
+    androidx.compose.foundation.text.BasicTextField(
+        value = text,
+        onValueChange = onChange,
+        textStyle = MaterialTheme.typography.bodySmall.copy(
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = com.cocakova.charon.theme.CharonMono,
+            color = Styx.bone,
+        ),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(Styx.water),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(autoCorrectEnabled = false),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     )
 }

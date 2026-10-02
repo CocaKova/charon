@@ -420,6 +420,9 @@ class TerminalSession(
                 'D' -> {
                     // The whisper's length: output-start to done, on this session's clock.
                     val finished = term.lastFinished
+                    // A line typed and sent is a command that ran, even from a shell
+                    // rigged without the C mark (the whisper then times from Enter).
+                    if (finished != null && voyage != null) finished.ran = true
                     val began = outputStartedAt ?: voyage?.let { it.startedAt ?: it.submittedAt }
                     if (finished != null && began != null) finished.durationMs = (now - began) / 1_000_000
                     outputStartedAt = null

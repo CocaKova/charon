@@ -281,7 +281,8 @@ private fun CharonRoot(
                 onReconnect = { sessionManager.forceReconnect(it) },
                 onNewSession = { sessionManager.showDock() },
                 onDock = { sessionManager.showDock() },
-                onFiles = { filesPath = null; filesFor = current.id },
+                // The hold opens where the shell stands (a rigged prompt's OSC 7), else home.
+                onFiles = { filesPath = current.cwd.value?.path; filesFor = current.id },
                 onSaveSnippet = { s -> scope.launch { snippetDao.upsert(s) } },
                 onDeleteSnippet = { id -> scope.launch { snippetDao.delete(id) } },
                 onToggleForward = { fwd -> sessionManager.toggleForward(current.id, fwd) },
@@ -361,7 +362,10 @@ private fun CharonRoot(
                 liveSessionFor = { host ->
                     sessions.firstOrNull { sessionManager.hostIdFor(it.id) == host.id }?.id
                 },
-                onOpenHold = { sessionId -> filesFor = sessionId },
+                onOpenHold = { sessionId ->
+                    filesPath = sessions.firstOrNull { it.id == sessionId }?.cwd?.value?.path
+                    filesFor = sessionId
+                },
                 onErrand = { host, command ->
                     // Prefer the host's own live transport — no second handshake, no
                     // re-trust/biometric prompt, no TOFU gate hiding under the sheet.

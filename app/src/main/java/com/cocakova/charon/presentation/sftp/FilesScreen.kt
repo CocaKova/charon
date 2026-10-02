@@ -58,13 +58,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.cocakova.charon.presentation.components.BrailleSpinner
 import com.cocakova.charon.ssh.RemoteEntry
 import com.cocakova.charon.ssh.SftpChannel
 import com.cocakova.charon.ssh.SftpTransfers
@@ -111,6 +114,16 @@ fun FilesScreen(
     var deleteTarget by remember { mutableStateOf<RemoteEntry?>(null) }
     var showMkdir by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
+    // The deck's order and what's below deck, remembered across visits.
+    val prefs = remember(context) { context.getSharedPreferences("charon", android.content.Context.MODE_PRIVATE) }
+    var sort by remember { mutableStateOf(runCatching { HoldSort.valueOf(prefs.getString("hold_sort", null) ?: "NAME") }.getOrDefault(HoldSort.NAME)) }
+    var showHidden by remember { mutableStateOf(prefs.getBoolean("hold_hidden", false)) }
+    // Several chosen at once (a long press starts it): carried ashore or released together.
+    var chosen by remember { mutableStateOf(setOf<String>()) }
+    var releaseChosen by remember { mutableStateOf(false) }
+    // A picture brought aboard for a look.
+    var picture by remember { mutableStateOf<RemoteEntry?>(null) }
+    var saveNote by remember { mutableStateOf<String?>(null) }
     // The scroll being read in place, and what's come aboard of it so far.
     var reading by remember { mutableStateOf<RemoteEntry?>(null) }
     var scroll by remember { mutableStateOf<ScrollContent>(ScrollContent.Loading) }
@@ -119,7 +132,14 @@ fun FilesScreen(
 
     // System back closes the scroll first, then steps off the deck, back to the
     // terminal — never out of the app.
-    BackHandler { if (reading != null) reading = null else onBack() }
+    BackHandler {
+        when {
+            picture != null -> picture = null
+            reading != null -> reading = null
+            chosen.isNotEmpty() -> chosen = emptySet()
+            else -> onBack()
+        }
+    }
 
     // The browser's own channel: opened once, closed on leave (off-main — close is
     // channel I/O too). Transfers never share it.
@@ -148,10 +168,9 @@ fun FilesScreen(
         withContext(Dispatchers.IO) {
             runCatching { ch.list(d) }
                 .onSuccess { list ->
-                    listing = d to list.sortedWith(
-                        compareByDescending<RemoteEntry> { it.isDir }
-                            .thenBy { it.name.lowercase() },
-                    )
+                    listing = d to list
+                    // A refreshed deck keeps only the choices still afloat on it.
+                    chosen = chosen.filterTo(HashSet()) { path -> list.any { it.path == path } }
                 }
                 .onFailure { error = it.message ?: "cannot read this deck" }
         }
@@ -189,12 +208,33 @@ fun FilesScreen(
             transfers.pull(openSftp, entry.path, entry.size, uri)
         }
     }
-    // … and aboard (OPEN_DOCUMENT picks the cargo).
+    // … several at once into a folder of your choosing …
+    var pendingMany by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
+    val manyLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { tree ->
+        val entries = pendingMany
+        pendingMany = emptyList()
+        if (tree == null || entries.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch(Dispatchers.IO) {
+            val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                tree, android.provider.DocumentsContract.getTreeDocumentId(tree),
+            )
+            for (entry in entries) {
+                val ext = entry.name.substringAfterLast('.', "").lowercase(Locale.US)
+                val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                runCatching {
+                    android.provider.DocumentsContract.createDocument(context.contentResolver, parent, mime, entry.name)
+                }.getOrNull()?.let { dest -> transfers.pull(openSftp, entry.path, entry.size, dest) }
+            }
+        }
+    }
+    // … and aboard (OPEN_DOCUMENT picks the cargo, as many as you like).
     val pushLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
         val d = dir
-        if (uri != null && d != null) {
+        if (d != null) for (uri in uris) {
             scope.launch(Dispatchers.IO) {
                 var name = uri.lastPathSegment?.substringAfterLast('/') ?: "upload"
                 var size = -1L
@@ -209,6 +249,27 @@ fun FilesScreen(
                     }
                 }
                 transfers.push(openSftp, uri, name, size, d)
+            }
+        }
+    }
+
+    /** Write an edited scroll back whole, over its own channel, then read it afresh. */
+    fun saveScroll(entry: RemoteEntry, text: String) {
+        scope.launch(Dispatchers.IO) {
+            val ch = openSftp()
+            saveNote = if (ch == null) {
+                "the hold is unreachable — nothing was written"
+            } else {
+                try {
+                    ch.openWrite(entry.path, 0).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                    readTick++
+                    refreshTick++
+                    "written back to ${entry.name}"
+                } catch (e: Exception) {
+                    "couldn't write it: ${e.message ?: "the hold refused"}"
+                } finally {
+                    runCatching { ch.close() }
+                }
             }
         }
     }
@@ -230,6 +291,47 @@ fun FilesScreen(
                 onMkdir = { showMkdir = true },
                 onUpload = { pushLauncher.launch(arrayOf("*/*")) },
             )
+            if (chosen.isEmpty()) {
+                OrderStrip(
+                    sort = sort,
+                    showHidden = showHidden,
+                    hidden = listing?.second?.let { HoldOrder.hiddenCount(it) } ?: 0,
+                    onSort = {
+                        sort = HoldSort.values()[(sort.ordinal + 1) % HoldSort.values().size]
+                        prefs.edit().putString("hold_sort", sort.name).apply()
+                    },
+                    onHidden = {
+                        showHidden = !showHidden
+                        prefs.edit().putBoolean("hold_hidden", showHidden).apply()
+                    },
+                )
+            } else {
+                val picked = listing?.second?.filter { it.path in chosen }.orEmpty()
+                ChosenBar(
+                    count = chosen.size,
+                    files = picked.count { !it.isDir },
+                    onAll = {
+                        val all = listing?.second?.let { HoldOrder.arrange(it, sort, showHidden) }.orEmpty()
+                        chosen = all.mapTo(HashSet()) { it.path }
+                    },
+                    onPull = {
+                        pendingMany = picked.filter { !it.isDir }
+                        manyLauncher.launch(null)
+                    },
+                    onRelease = { releaseChosen = true },
+                    onMore = picked.singleOrNull()?.let { one -> { chosen = emptySet(); selected = one } },
+                    onClear = { chosen = emptySet() },
+                )
+            }
+            saveNote?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Styx.water,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                LaunchedEffect(it) { kotlinx.coroutines.delay(3000); saveNote = null }
+            }
             HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.surfaceVariant)
             // A quiet pulse under the bar while a listing is in flight over the old deck.
             if (loading && listing != null) {
@@ -242,8 +344,14 @@ fun FilesScreen(
 
             Box(Modifier.weight(1f)) {
                 when {
-                    loading && listing == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Styx.water)
+                    loading && listing == null -> Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        BrailleSpinner(color = Styx.water, style = MaterialTheme.typography.headlineSmall, label = "opening the hold")
+                        Spacer(Modifier.height(8.dp))
+                        Text("opening the hold…", style = MaterialTheme.typography.bodySmall, color = Styx.mist)
                     }
                     error != null -> Column(
                         Modifier.fillMaxSize(),
@@ -281,22 +389,28 @@ fun FilesScreen(
                                     UpRow { dir = d.trimEnd('/').substringBeforeLast('/').ifEmpty { "/" } }
                                 }
                             }
-                            items(deck.second, key = { it.path }) { entry ->
+                            items(HoldOrder.arrange(deck.second, sort, showHidden), key = { it.path }) { entry ->
+                                val isChosen = entry.path in chosen
                                 EntryRow(
                                     entry = entry,
+                                    chosen = isChosen,
                                     onOpen = {
-                                        // A tap opens whatever can be opened here: a
-                                        // deck below, or a scroll read in place. Cargo
-                                        // still goes through the sheet to go anywhere.
+                                        // Choosing several: a tap adds or drops. Otherwise a
+                                        // tap opens whatever can be opened here: a deck
+                                        // below, a scroll read in place, a picture held up
+                                        // to the light. Cargo goes through the sheet.
                                         when {
+                                            chosen.isNotEmpty() ->
+                                                chosen = if (isChosen) chosen - entry.path else chosen + entry.path
                                             entry.isDir -> dir = entry.path
+                                            HoldOrder.isPicture(entry) -> picture = entry
                                             readsAsText(entry) -> reading = entry
                                             else -> selected = entry
                                         }
                                     },
                                     onLongPress = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        selected = entry
+                                        chosen = if (isChosen) chosen - entry.path else chosen + entry.path
                                     },
                                     modifier = Modifier.animateItem(),
                                 )
@@ -344,6 +458,7 @@ fun FilesScreen(
                 content = scroll,
                 onBack = { reading = null },
                 onRetry = { readTick++ },
+                onSave = { text -> saveScroll(entry, text) },
                 onPull = {
                     // Step back to the deck as the crossing starts: the ledger is
                     // down there, and a scroll over it would hide its own progress.
@@ -356,6 +471,50 @@ fun FilesScreen(
     }
 
     // ---- sheets & dialogs ----------------------------------------------------------
+
+    picture?.let { entry ->
+        PicturePreview(
+            entry = entry,
+            openSftp = openSftp,
+            onBack = { picture = null },
+            onPull = {
+                picture = null
+                pendingPull = entry
+                pullLauncher.launch(entry.name)
+            },
+        )
+    }
+
+    if (releaseChosen) {
+        val doomed = listing?.second?.filter { it.path in chosen }.orEmpty()
+        AlertDialog(
+            onDismissRequest = { releaseChosen = false },
+            title = { Text("release ${doomed.size} into the river?", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    doomed.joinToString(", ") { it.name }.take(400) +
+                        "\n\nfolders must be empty; there's no fishing any of it back",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Styx.mist,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    releaseChosen = false
+                    chosen = emptySet()
+                    val ch = channel ?: return@TextButton
+                    scope.launch(Dispatchers.IO) {
+                        val refused = doomed.filter { e -> runCatching { ch.delete(e.path, e.isDir) }.isFailure }
+                        if (refused.isNotEmpty()) error = "kept ${refused.size}: " + refused.joinToString(", ") { it.name }
+                        refreshTick++
+                    }
+                }) { Text("release ${doomed.size}", color = Styx.ember) }
+            },
+            dismissButton = {
+                TextButton(onClick = { releaseChosen = false }) { Text("keep", color = Styx.mist) }
+            },
+        )
+    }
 
     selected?.let { entry ->
         ModalBottomSheet(onDismissRequest = { selected = null }) {
@@ -510,6 +669,7 @@ private fun UpRow(onUp: () -> Unit) {
 @Composable
 private fun EntryRow(
     entry: RemoteEntry,
+    chosen: Boolean,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
@@ -517,19 +677,25 @@ private fun EntryRow(
     Row(
         modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
+            .background(if (chosen) Styx.water.copy(alpha = 0.14f) else androidx.compose.ui.graphics.Color.Transparent)
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = onLongPress,
+                onLongClickLabel = if (chosen) "drop from the chosen" else "choose",
+            )
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A quiet sigil column: directories are teal doors, files bone cargo.
         Text(
             when {
+                chosen -> "☑"
                 entry.isLink -> "⇝"
                 entry.isDir -> "▸"
                 else -> "·"
             },
             style = MaterialTheme.typography.bodyMedium,
-            color = if (entry.isDir) Styx.water else Styx.mist,
+            color = if (entry.isDir || chosen) Styx.water else Styx.mist,
         )
         Spacer(Modifier.width(12.dp))
         Text(
@@ -736,4 +902,138 @@ private fun landingDir(ch: SftpChannel, path: String): String? {
     val clean = path.trimEnd('/').ifEmpty { "/" }
     return runCatching { ch.list(clean); clean }.getOrNull()
         ?: clean.substringBeforeLast('/', "").ifEmpty { "/" }.takeIf { parent -> runCatching { ch.list(parent) }.isSuccess }
+}
+
+/** The deck's order and the hidden toggle, one quiet line under the bar. */
+@Composable
+private fun OrderStrip(sort: HoldSort, showHidden: Boolean, hidden: Int, onSort: () -> Unit, onHidden: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BarAction("by ${sort.label} ⇅", onSort, tint = Styx.water)
+        Spacer(Modifier.weight(1f))
+        BarAction(
+            when {
+                showHidden -> "hide dotfiles"
+                hidden > 0 -> "show $hidden dotfiles"
+                else -> "no dotfiles here"
+            },
+            onHidden,
+            tint = if (showHidden) Styx.coin else Styx.mist,
+        )
+    }
+}
+
+/** Several chosen: carried ashore together, released together, or one opened in the sheet. */
+@Composable
+private fun ChosenBar(
+    count: Int,
+    files: Int,
+    onAll: () -> Unit,
+    onPull: () -> Unit,
+    onRelease: () -> Unit,
+    onMore: (() -> Unit)?,
+    onClear: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().background(Styx.water.copy(alpha = 0.10f)).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "$count chosen",
+            style = MaterialTheme.typography.labelMedium,
+            color = Styx.water,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        BarAction("all", onAll)
+        if (files > 0) BarAction("⇣ ashore", onPull, tint = Styx.coin)
+        BarAction("release", onRelease, tint = Styx.ember)
+        onMore?.let { BarAction("⋯", it) }
+        BarAction("✕", onClear)
+    }
+}
+
+/**
+ * A picture held up to the light: drawn aboard over its own channel, decoded off the
+ * main thread and scaled to the glass, dissolving in once it lands. A file that
+ * won't decode says so plainly instead of drawing nothing.
+ */
+@Composable
+private fun PicturePreview(
+    entry: RemoteEntry,
+    openSftp: () -> SftpChannel?,
+    onBack: () -> Unit,
+    onPull: () -> Unit,
+) {
+    var image by remember(entry.path) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var problem by remember(entry.path) { mutableStateOf<String?>(null) }
+    val shown = remember(entry.path) { Animatable(0f) }
+    val context = LocalContext.current
+    LaunchedEffect(entry.path) {
+        val maxSide = context.resources.displayMetrics.let { maxOf(it.widthPixels, it.heightPixels) }
+        withContext(Dispatchers.IO) {
+            val ch = openSftp()
+            if (ch == null) {
+                problem = "the hold is unreachable"
+                return@withContext
+            }
+            try {
+                val bytes = ch.openRead(entry.path).use { it.readBytes() }
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(
+                    bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+                )
+                if (bitmap == null) problem = "this picture won't draw — the phone can't read its format"
+                else image = bitmap.asImageBitmap()
+            } catch (e: Exception) {
+                problem = e.message ?: "couldn't bring it aboard"
+            } finally {
+                runCatching { ch.close() }
+            }
+        }
+        if (image != null) shown.animateTo(1f, tween(320))
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+    ) {
+        val img = image
+        when {
+            img != null -> androidx.compose.foundation.Image(
+                bitmap = img,
+                contentDescription = entry.name,
+                modifier = Modifier.fillMaxSize().alpha(shown.value),
+            )
+            problem != null -> Text(
+                problem!!,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Styx.mist,
+                modifier = Modifier.align(Alignment.Center).padding(32.dp),
+            )
+            else -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                BrailleSpinner(color = Styx.water, style = MaterialTheme.typography.headlineSmall, label = "drawing the picture aboard")
+                Spacer(Modifier.height(8.dp))
+                Text("drawing ${entry.name} aboard…", style = MaterialTheme.typography.bodySmall, color = Styx.mist)
+            }
+        }
+        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            BarAction("←", onBack)
+            Text(
+                entry.name,
+                style = MaterialTheme.typography.labelMedium,
+                color = Styx.water,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            BarAction("⇣ ashore", onPull, tint = Styx.coin)
+        }
+    }
 }

@@ -45,65 +45,86 @@ One block in the shell's rc file. Idempotent (sourcing twice doesn't double up),
 
 ```bash
 # Charon shell integration: the horn (OSC 133) + the soundings (OSC 7)
+__charon_osc() {
+  if [ -n "$TMUX" ]; then printf '\ePtmux;\e\e]%s\a\e\\' "$1"; else printf '\e]%s\a' "$1"; fi
+}
 __charon_prompt() {
   local rc=$? LC_ALL=C s=$PWD u= c i
   for ((i = 0; i < ${#s}; i++)); do
     c=${s:i:1}
     case $c in [A-Za-z0-9/._~-]) u+=$c ;; *) printf -v c '%%%02X' "'$c"; u+=$c ;; esac
   done
-  if [ -n "$TMUX" ]; then printf '\ePtmux;\e\e]133;D;%s\a\e\\' "$rc"
-  else printf '\e]133;D;%s\a' "$rc"; fi
+  __charon_osc "133;D;$rc"
   printf '\e]7;file://%s%s\a' "$HOSTNAME" "$u"
+  __charon_osc "133;A"
   return $rc
 }
 [[ $PROMPT_COMMAND == *__charon_prompt* ]] ||
   PROMPT_COMMAND="__charon_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+[[ $PS0 == *__charon_osc* ]] || PS0+='$(__charon_osc "133;C")'
 ```
 
 **zsh** (`~/.zshrc`):
 
 ```zsh
 # Charon shell integration: the horn (OSC 133) + the soundings (OSC 7)
+__charon_osc() {
+  if [[ -n $TMUX ]]; then printf '\ePtmux;\e\e]%s\a\e\\' $1; else printf '\e]%s\a' $1; fi
+}
 __charon_prompt() {
   local rc=$? LC_ALL=C s=$PWD u= c i
   for (( i = 1; i <= ${#s}; i++ )); do
     c=${s[i]}
     case $c in ([A-Za-z0-9/._~-]) u+=$c ;; (*) printf -v c '%%%02X' $(( #c & 255 )); u+=$c ;; esac
   done
-  if [[ -n $TMUX ]]; then printf '\ePtmux;\e\e]133;D;%s\a\e\\' $rc
-  else printf '\e]133;D;%s\a' $rc; fi
+  __charon_osc "133;D;$rc"
   printf '\e]7;file://%s%s\a' $HOST $u
+  __charon_osc "133;A"
   return $rc
 }
+__charon_preexec() { __charon_osc "133;C" }
 (( ${precmd_functions[(I)__charon_prompt]} )) || precmd_functions+=(__charon_prompt)
+(( ${preexec_functions[(I)__charon_preexec]} )) || preexec_functions+=(__charon_preexec)
 ```
 
 **fish** (`~/.config/fish/config.fish`):
 
 ```fish
 # Charon shell integration: the horn (OSC 133) + the soundings (OSC 7)
+function __charon_osc
+    if set -q TMUX
+        printf '\ePtmux;\e\e]%s\a\e\\' $argv[1]
+    else
+        printf '\e]%s\a' $argv[1]
+    end
+end
 function __charon_prompt --on-event fish_prompt
     set -l rc $status
-    if set -q TMUX
-        printf '\ePtmux;\e\e]133;D;%s\a\e\\' $rc
-    else
-        printf '\e]133;D;%s\a' $rc
-    end
+    __charon_osc "133;D;$rc"
     printf '\e]7;file://%s%s\a' $hostname (string escape --style=url -- $PWD)
+    __charon_osc "133;A"
+end
+function __charon_preexec --on-event fish_preexec
+    __charon_osc "133;C"
 end
 ```
 
 The loop in the bash and zsh versions percent-encodes the path byte by byte (a space,
-a `%`, an `é` all survive the trip); fish has an encoder built in. Checked against bash
-5, zsh 5.9 and fish 4.
+a `%`, an `é` all survive the trip); fish has an encoder built in. The bash block is run by
+the test suite (it parses, and emits D, OSC 7 and A); the zsh and fish blocks are
+parse-checked there when those shells are installed.
 
-Optional, for more accurate horn timing (marks when output actually starts, so shell
-startup lag doesn't count against the voyage) — bash example via a preexec hook, or in
-zsh:
+Each block marks the prompt's start (A), the moment a command's output begins (C:
+bash's `PS0`, zsh's `preexec`, fish's `fish_preexec`), the command's end with its exit
+code (D) and the working directory (OSC 7). A and C are what the duration whispers
+(`✓ 2m14s`, `✕ exit 2`), the ⇡ ⇣ prompt hops and the horn's landing on its command read;
+a shell that only sends D still sounds the horn.
 
-```zsh
-preexec() { printf '\e]133;C\a' }
-```
+**Or let Charon rig it:** long-press a mooring on the Dock → **rig the horn**. Charon asks
+the shore which shell it logs in with, shows the exact lines and the exact file, and
+writes nothing until you say so. The block lands between `# >>> charon rig >>>` and
+`# <<< charon rig <<<` (delete those lines and everything between to take it out), and
+only if the first marker isn't there already.
 
 ## Inside tmux
 

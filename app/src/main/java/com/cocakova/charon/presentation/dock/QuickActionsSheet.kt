@@ -54,6 +54,8 @@ fun QuickActionsSheet(
     onOpenHold: (String) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    /** Rig this shore's shell for the horn (asks first, shows every line). */
+    onRigHorn: () -> Unit = {},
 ) {
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
@@ -112,6 +114,10 @@ fun QuickActionsSheet(
                 haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 onDismiss()
             }
+            QuickAction(
+                "rig the horn", "teach this shore's shell to say when commands end",
+                Styx.coin, dismissThen(onRigHorn),
+            )
             QuickAction(
                 "edit the mooring", "name, harbor, lantern, keys…",
                 MaterialTheme.colorScheme.onSurface, dismissThen(onEdit),

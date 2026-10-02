@@ -129,6 +129,7 @@ fun DockScreen(
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
     var hailing by remember { mutableStateOf<HailTarget?>(null) }
+    var rigging by remember { mutableStateOf<HostEntity?>(null) }
     LaunchedEffect(incomingHail) {
         incomingHail?.let { hailing = it; onIncomingHailTaken() }
     }
@@ -451,7 +452,12 @@ fun DockScreen(
             onOpenHold = onOpenHold,
             onEdit = { editing = EditTarget.Existing(host) },
             onDelete = { onDelete(host.id) },
+            onRigHorn = { rigging = host },
         )
+    }
+
+    rigging?.let { host ->
+        HornRigSheet(host = host, onErrand = onErrand, onDismiss = { rigging = null })
     }
 }
 

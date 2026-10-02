@@ -335,7 +335,7 @@ fun SettingsSheet(
                     )
                     Text(
                         "a push when a long command finishes while you're away — " +
-                            "the shell needs a one-line rig (docs/HORN.md)",
+                            "rig a shore from its quick actions (long-press it on the Dock)",
                         style = MaterialTheme.typography.bodySmall,
                         color = Styx.mist,
                     )
