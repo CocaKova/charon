@@ -57,6 +57,7 @@ import com.cocakova.charon.terminal.CellExt
 import com.cocakova.charon.terminal.Contrast
 import com.cocakova.charon.terminal.Line
 import com.cocakova.charon.terminal.SearchEngine
+import com.cocakova.charon.terminal.Seam
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.terminal.UrlScanner
@@ -577,6 +578,9 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
         isSubpixelText = true
     }
 
+    /** Seam labels, formatted once per seam (the clock text never changes). */
+    val seamLabels = java.util.WeakHashMap<Seam, String>()
+
     /** The sheen over a shade still on the decoder's bench, and the frame of one that failed. */
     val shimmer = Paint().apply { isAntiAlias = true }
 
@@ -782,6 +786,7 @@ private fun drawTerminal(
         }
         // A finished command's whisper at the row's far end ("✓ 2m14s", "✕ exit 2"),
         // only where the prompt line leaves room for it — never over the text.
+        line.seam?.let { seam -> drawSeam(canvas, p, line, seam, top, term.cols, cw, ch) }
         if (!term.usingAlt) line.promptMark?.whisper()?.let { words ->
             drawWhisper(canvas, p, line, words, line.promptMark!!.failed, baseline, term.cols, cw, defaultFg, term.palette[1])
         }
@@ -1082,5 +1087,48 @@ private fun drawWhisper(
     p.whisper.color = if (failed) opaque(red) else opaque(defaultFg)
     p.whisper.alpha = if (failed) 200 else 110
     canvas.drawText(words, left, baseline - (p.text.textSize - p.whisper.textSize) * 0.15f, p.whisper)
+    p.whisper.alpha = 255
+}
+
+/**
+ * A seam in the wake: a gold dashed rule across the row where a redial landed, and
+ * at its right end "re-crossed 14:02 · 8 s adrift".
+ */
+private fun drawSeam(
+    canvas: android.graphics.Canvas,
+    p: TerminalPaints,
+    line: Line,
+    seam: Seam,
+    top: Float,
+    cols: Int,
+    cw: Float,
+    ch: Float,
+) {
+    val y = if (seam.below) top + ch - 1f else top + 1f
+    val gold = opaque(if (p.lightGround) SEARCH_GOLD_PAPER else SEARCH_GOLD)
+    p.fill.color = gold
+    p.fill.alpha = 200
+    val dash = cw * 0.9f
+    var x = 0f
+    val right = cols * cw
+    while (x < right) {
+        canvas.drawRect(x, y - 0.75f, minOf(x + dash, right), y + 0.75f, p.fill)
+        x += dash * 2
+    }
+    p.fill.alpha = 255
+    val label = p.seamLabels.getOrPut(seam) {
+        val at = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(seam.atMillis))
+        val adrift = seam.adriftMs / 1000
+        "re-crossed $at · " + (if (adrift < 60) "${adrift}s" else "${adrift / 60}m${adrift % 60}s") + " adrift"
+    }
+    val w = p.whisper.measureText(label)
+    var lastInk = cols - 1
+    while (lastInk >= 0 && (line.codePoints[lastInk] == Line.SPACE || line.codePoints[lastInk] == 0)) lastInk--
+    if (right - w - cw * 0.25f < (lastInk + 2) * cw) return // the rule alone, never over text
+    // The label sits just inside the row, on the side away from the rule's text.
+    val labelY = if (seam.below) top + ch - 3f else top + p.whisper.textSize + 2f
+    p.whisper.color = gold
+    p.whisper.alpha = 230
+    canvas.drawText(label, right - w - cw * 0.25f, labelY, p.whisper)
     p.whisper.alpha = 255
 }

@@ -1,5 +1,9 @@
 package com.cocakova.charon.presentation.dock
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import com.cocakova.charon.ssh.HostSigil
 import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -162,11 +166,23 @@ private fun FingerprintPlaque(label: String, fingerprint: String, dark: Boolean 
             style = MaterialTheme.typography.bodySmall,
             color = Styx.mist,
         )
-        Text(
-            fingerprint,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Styx.bone,
+        androidx.compose.foundation.layout.Row(
             modifier = Modifier.padding(top = 4.dp),
-        )
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            // The key's sigil: the same key always draws the same mark, a new key
+            // a different one — it's stamped on the mooring's card once trusted.
+            Column(Modifier.padding(end = 12.dp).semantics { contentDescription = "the key's sigil" }) {
+                HostSigil.braille(fingerprint).forEach {
+                    Text(it, style = MaterialTheme.typography.titleMedium.copy(letterSpacing = 0.sp), color = Styx.water)
+                }
+            }
+            Text(
+                fingerprint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Styx.bone,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }

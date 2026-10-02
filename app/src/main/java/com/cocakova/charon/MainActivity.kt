@@ -1,5 +1,8 @@
 package com.cocakova.charon
 
+import com.cocakova.charon.ssh.HostSigil
+import com.cocakova.charon.data.db.KnownHostEntity
+import com.cocakova.charon.data.db.KnownHostDao
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -83,7 +86,7 @@ class MainActivity : FragmentActivity() {
                     app.sessionManager, app.hostVault, app.keyVault,
                     app.commandHistory, app.transfers,
                     app.db.snippets(), app.db.portForwards(),
-                    app.fleetWatch,
+                    app.fleetWatch, app.db.knownHosts(),
                 )
             }
         }
@@ -163,6 +166,7 @@ private fun CharonRoot(
     snippetDao: SnippetDao,
     portForwardDao: PortForwardDao,
     fleetWatch: FleetWatch,
+    knownHostDao: KnownHostDao,
 ) {
     val active by sessionManager.activeSession.collectAsState()
     val sessions by sessionManager.sessions.collectAsState()
@@ -180,6 +184,14 @@ private fun CharonRoot(
     val historyEntries by commandHistory.entries.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // The ledger's sigils for the Dock's cards, re-read whenever a crossing opens or
+    // closes or a trust question is answered.
+    var ledger by remember { mutableStateOf<List<KnownHostEntity>>(emptyList()) }
+    LaunchedEffect(sessions.size, pendingTrust) { ledger = knownHostDao.allOnce() }
+    val sigils = remember(ledger) {
+        ledger.associate { (it.host.lowercase() to it.port) to HostSigil.braille(it.fingerprint) }
+    }
 
     // The launcher's long-press list follows the moorings (the vault's own emissions,
     // never the empty list the screen starts from).
@@ -320,6 +332,7 @@ private fun CharonRoot(
                 onSaveForward = { fwd -> scope.launch { portForwardDao.upsert(fwd) } },
                 onDeleteForward = { id -> scope.launch { portForwardDao.delete(id) } },
                 onForwardLink = { host, port -> sessionManager.forwardLink(current.id, host, port) },
+                hostColorOf = { id -> sessionManager.hostIdFor(id)?.let { hid -> hosts.firstOrNull { it.id == hid }?.colorHex } },
                 onFilesAt = { path -> filesPath = path; filesFor = current.id },
             )
         } else {
@@ -356,6 +369,7 @@ private fun CharonRoot(
                     }
                 },
                 incomingHail = incomingHail,
+                sigilOf = { h -> sigils[h.host.lowercase() to h.port] },
                 onIncomingHailTaken = { incomingHail = null },
                 onHail = { draft ->
                     scope.launch {

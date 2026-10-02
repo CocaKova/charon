@@ -62,6 +62,8 @@ class SessionManager(
         /** True once the crossing has stood up at least once — the gate for redialing.
          *  A first attempt that fails (bad password, wrong host) must NOT loop forever. */
         @Volatile var everConnected: Boolean = false
+        /** Wall-clock millis the established crossing dropped; 0 while afloat. */
+        @Volatile var adriftSince: Long = 0L
         var watchJob: Job? = null
         var reconnectJob: Job? = null
         /** Live host knowledge for smart autofill; probes ride this session's transport. */
@@ -132,7 +134,7 @@ class SessionManager(
                 if (!ms.closed && ms.config.autoReconnect && ms.everConnected && down) {
                     ms.reconnectJob?.cancel()
                     ms.retries = 0
-                    ms.session.state.value = TerminalSession.State.Reconnecting(1)
+                    ms.session.state.value = TerminalSession.State.Reconnecting(1, networkBack = true)
                     launchConnect(ms, firstAttempt = false)
                 }
             }
@@ -301,6 +303,12 @@ class SessionManager(
                 when (state) {
                     is TerminalSession.State.Connected -> {
                         ms.retries = 0
+                        // A re-made crossing leaves a seam in the wake: when, and how long adrift.
+                        if (ms.everConnected && ms.adriftSince != 0L) {
+                            val now = System.currentTimeMillis()
+                            ms.session.markSeam(now, now - ms.adriftSince)
+                        }
+                        ms.adriftSince = 0L
                         ms.everConnected = true
                         // Inventory the host for autofill on every crossing (PATH can
                         // change between redials; the probe is one cheap exec).
@@ -309,6 +317,7 @@ class SessionManager(
                         ms.remote?.refreshHost()
                     }
                     is TerminalSession.State.Disconnected -> {
+                        if (ms.adriftSince == 0L && !state.clean) ms.adriftSince = System.currentTimeMillis()
                         // The shell that reported a working directory, ran the voyage
                         // and hauled the cargo died with the transport; the redialed
                         // one will sound its own.
@@ -334,10 +343,13 @@ class SessionManager(
     private fun beginReconnect(ms: Managed) {
         if (ms.closed) return
         if (ms.reconnectJob?.isActive == true) return
-        ms.session.state.value = TerminalSession.State.Reconnecting(ms.retries + 1)
+        // 1s, 2s, 4s … capped at 120s. The network callback can pre-empt this.
+        val backoff = (1_000L shl ms.retries.coerceAtMost(7)).coerceAtMost(120_000L)
+        // The overlay counts down to the next try: the backoff, said honestly.
+        ms.session.state.value = TerminalSession.State.Reconnecting(
+            ms.retries + 1, nextTryAtMs = System.currentTimeMillis() + backoff,
+        )
         ms.reconnectJob = scope.launch {
-            // 1s, 2s, 4s … capped at 120s. The network callback can pre-empt this.
-            val backoff = (1_000L shl ms.retries.coerceAtMost(7)).coerceAtMost(120_000L)
             delay(backoff)
             ms.retries++
             ms.session.state.value = TerminalSession.State.Reconnecting(ms.retries)

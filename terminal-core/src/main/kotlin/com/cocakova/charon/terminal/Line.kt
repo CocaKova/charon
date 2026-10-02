@@ -41,6 +41,9 @@ class Line(cols: Int) {
     /** A command's output began on this line (OSC 133 C); the horn lands here. */
     var outputMark: CommandMark? = null
 
+    /** A redial landed here: the seam between the old shell and the new. */
+    var seam: Seam? = null
+
     val cols: Int get() = codePoints.size
 
     init {
@@ -102,6 +105,7 @@ class Line(cols: Int) {
         apparitions = null
         promptMark = null
         outputMark = null
+        seam = null
     }
 
     /** Anchor an apparition here; the newest of a given placement id wins. */

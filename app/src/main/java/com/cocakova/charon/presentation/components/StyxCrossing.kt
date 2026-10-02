@@ -1,5 +1,8 @@
 package com.cocakova.charon.presentation.components
 
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.animation.core.Animatable
@@ -113,10 +116,21 @@ fun StyxCrossing(
             }
         }
 
-        LaunchedEffect(connecting) {
+        // The river moves only when something is happening — a crossing, the boat
+        // under way, or a few seconds' settling after either (or after the Dock comes
+        // into view) — and never while the app is out of sight. Idle, it holds its
+        // last frame: a still river means a still harbour, and costs nothing.
+        val lifecycle = LocalLifecycleOwner.current.lifecycle
+        val seen by lifecycle.currentStateFlow.collectAsState()
+        val visible = seen.isAtLeast(Lifecycle.State.STARTED)
+        LaunchedEffect(connecting, holding, away, visible) {
+            if (!visible) return@LaunchedEffect
             var last = -1L
+            var settleUntil = System.nanoTime() + SETTLE_NS
             while (isActive) {
-                // ~30 fps while anything moves, ~10 fps for idle water.
+                if (connecting || boatX.isRunning) settleUntil = System.nanoTime() + SETTLE_NS
+                if (System.nanoTime() > settleUntil) break
+                // ~30 fps while anything moves, ~10 fps for settling water.
                 delay(if (connecting || boatX.isRunning) 33 else 100)
                 val now = System.nanoTime()
                 if (last > 0) {
@@ -499,3 +513,6 @@ private val DOT_BITS = arrayOf(
     intArrayOf(0x01, 0x02, 0x04, 0x40),
     intArrayOf(0x08, 0x10, 0x20, 0x80),
 )
+
+/** How long the river keeps moving after the last thing that moved it. */
+private const val SETTLE_NS = 5_000_000_000L

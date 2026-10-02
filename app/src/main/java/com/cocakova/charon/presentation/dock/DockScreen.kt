@@ -1,5 +1,9 @@
 package com.cocakova.charon.presentation.dock
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.mutableFloatStateOf
 import com.cocakova.charon.theme.NightPalette
 import com.cocakova.charon.theme.LocalCharonPalette
 import com.cocakova.charon.theme.Hulls
@@ -107,6 +111,8 @@ fun DockScreen(
     holding: Boolean = false,
     /** Call back a crossing that hasn't landed yet. */
     onTurnBack: () -> Unit = {},
+    /** The trusted host key's braille sigil for a mooring, when the ledger holds one. */
+    sigilOf: (HostEntity) -> List<String>? = { null },
     error: String?,
     onConnect: (HostEntity) -> Unit,
     onQuickConnect: (HostDraft) -> Unit,
@@ -167,12 +173,22 @@ fun DockScreen(
     // One clock lights every lantern on the Dock: each card reads this inside its
     // draw phase (never in composition) at its own phase offset, so the whole fleet
     // flickers asynchronously off a single animation instead of one per card.
-    val lanternClock = rememberInfiniteTransition(label = "lanterns").animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing)),
-        label = "lanternClock",
-    )
+    // The lanterns flicker for a while when there's news (the Dock comes into view,
+    // a sounding lands, a crossing starts) and then burn steady: a still Dock costs
+    // no frames.
+    val lanternClock = remember { mutableFloatStateOf(0f) }
+    var lanternsAwake by remember { mutableStateOf(true) }
+    LaunchedEffect(soundings, connecting) {
+        lanternsAwake = true
+        delay(LANTERN_AWAKE_MS)
+        lanternsAwake = false
+    }
+    LaunchedEffect(lanternsAwake) {
+        val start = withFrameNanos { it }
+        while (lanternsAwake) {
+            withFrameNanos { t -> lanternClock.floatValue = ((t - start) / 1e9f * LANTERN_RATE) % (2 * Math.PI).toFloat() }
+        }
+    }
     var query by rememberSaveable { mutableStateOf("") }
     // Harbors the user has folded shut. Ephemeral by design — a fresh launch shows
     // the whole fleet.
@@ -339,6 +355,7 @@ fun DockScreen(
                             host = host,
                             sounding = soundings[host.id],
                             lanternClock = lanternClock,
+                            sigil = sigilOf(host),
                             enabled = !connecting,
                             onCross = { onConnect(host) },
                             onEdit = { editing = EditTarget.Existing(host) },
@@ -663,6 +680,7 @@ private fun MooringCard(
     host: HostEntity,
     sounding: Sounding?,
     lanternClock: State<Float>,
+    sigil: List<String>?,
     enabled: Boolean,
     onCross: () -> Unit,
     onEdit: () -> Unit,
@@ -768,10 +786,22 @@ private fun MooringCard(
                 color = Styx.mist,
             )
         }
+        // The trusted key's sigil, stamped small: a rekeyed host wears a different one.
+        sigil?.let { rows ->
+            Column(Modifier.padding(start = 6.dp).semantics { contentDescription = "host key sigil" }) {
+                rows.forEach {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.sp, lineHeight = 11.sp),
+                        color = Styx.water.copy(alpha = 0.55f),
+                    )
+                }
+            }
+        }
         IconButton(onClick = onEdit, enabled = enabled) {
             Icon(
                 Icons.Outlined.Edit,
-                contentDescription = "edit",
+                contentDescription = "edit ${host.displayName}",
                 tint = Styx.mist,
                 modifier = Modifier.size(18.dp),
             )
@@ -840,3 +870,7 @@ private fun ChartWatersCard(
         )
     }
 }
+
+/** How long the lanterns flicker after news before they burn steady. */
+private const val LANTERN_AWAKE_MS = 10_000L
+private const val LANTERN_RATE = (2 * Math.PI / 2.8).toFloat()

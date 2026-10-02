@@ -4,6 +4,7 @@ import com.cocakova.charon.BuildConfig
 import com.cocakova.charon.cargo.CargoLading
 import com.cocakova.charon.cargo.CargoWatch
 import com.cocakova.charon.terminal.ShellCwd
+import com.cocakova.charon.terminal.Seam
 import com.cocakova.charon.terminal.TerminalEmulator
 import com.cocakova.charon.terminal.TextSelection
 import com.cocakova.charon.terminal.input.KeyEncoder
@@ -45,7 +46,16 @@ class TerminalSession(
         data object Connecting : State()
         data object Connected : State()
         /** Down after a transport drop, redialing. [attempt] counts from 1. */
-        data class Reconnecting(val attempt: Int) : State()
+        /**
+         * Adrift and redialing. [nextTryAtMs] (wall clock) is when the next attempt
+         * goes, 0 while one is in flight; [networkBack] = the network just returned
+         * and the crossing is being re-made at once.
+         */
+        data class Reconnecting(
+            val attempt: Int,
+            val nextTryAtMs: Long = 0L,
+            val networkBack: Boolean = false,
+        ) : State()
         /**
          * Down for good (until a manual re-cross). [clean] = the remote closed the
          * channel normally (you typed `exit`, or the server hung up) rather than the
@@ -143,6 +153,15 @@ class TerminalSession(
             cwdReported = false
             term.write(bytes, offset, length)
             lastOutputAt = System.nanoTime()
+            bytesIn += length
+            // The latency lantern: the first byte back after a keystroke closes its round trip.
+            val armed = rttArmedAt
+            if (armed != 0L) {
+                rttArmedAt = 0L
+                val ms = (clock() - armed) / 1_000_000
+                if (ms in 0..RTT_MAX_MS) noteRtt(ms)
+            }
+            lastOutputClock = clock()
             // The remote spoke: whatever keystroke was waiting on its echo has been
             // answered, one way or another — the line is not reading in secret.
             if (echoPending != 0L) {
@@ -341,6 +360,40 @@ class TerminalSession(
 
     private fun raise(kind: SignalKind) {
         _signal.value = Signal(kind, ++signalSeq)
+    }
+
+    // ---- The latency lantern ----------------------------------------------------------
+    // Every printable keystroke sent into quiet water (nothing arriving for a beat)
+    // starts a stopwatch; the first byte back stops it. That's the echo's round trip,
+    // measured for free; a smoothed reading drives the tab dot's breath and warmth.
+
+    /** Bytes received over this session's life; the waterline reads its rate. */
+    @Volatile var bytesIn: Long = 0L
+        private set
+
+    @Volatile private var rttArmedAt = 0L
+    @Volatile private var lastOutputClock = Long.MIN_VALUE / 2
+    private var rttSmoothed = 0.0
+
+    private val _echoMs = MutableStateFlow(0)
+    /** Keystroke-to-echo round trip, smoothed, in ms; 0 until the first one is timed. */
+    val echoMs: StateFlow<Int> = _echoMs
+
+    private fun noteRtt(ms: Long) {
+        rttSmoothed = if (rttSmoothed == 0.0) ms.toDouble() else rttSmoothed * 0.7 + ms * 0.3
+        _echoMs.value = rttSmoothed.toInt().coerceAtLeast(1)
+    }
+
+    /**
+     * A redial landed: hang the seam on the cursor's line (primary screen only — a
+     * full-screen program redraws its own glass).
+     */
+    fun markSeam(atMillis: Long, adriftMs: Long) {
+        synchronized(lock) {
+            if (term.usingAlt) return
+            term.screen.line(term.cursorY).seam = Seam(atMillis, adriftMs, below = term.cursorX > 0)
+        }
+        outputTick.value += 1
     }
 
     private val _sounded = MutableStateFlow(false)
@@ -607,6 +660,9 @@ class TerminalSession(
                     if (lineTrusted) lineBuf.append(c)
                     // First unanswered printable on this line arms the echo net.
                     if (!echoSeen && echoPending == 0L) echoPending = System.nanoTime()
+                    // And every keystroke into quiet water times a round trip.
+                    val now = clock()
+                    if (rttArmedAt == 0L && now - lastOutputClock > RTT_QUIET_NS) rttArmedAt = now
                     i++
                 }
             }
@@ -848,6 +904,12 @@ class TerminalSession(
 
         /** The closest two bells may ring. */
         const val BELL_GAP_NS = 400_000_000L
+
+        /** A keystroke only times a round trip when nothing has arrived for this long. */
+        const val RTT_QUIET_NS = 250_000_000L
+
+        /** Past this, the "echo" was something else (a prompt that thought, a password). */
+        const val RTT_MAX_MS = 3_000L
 
         /** A command shorter than this finishing in another tab isn't worth a flash. */
         const val SIGNAL_MIN_MS = 5_000L

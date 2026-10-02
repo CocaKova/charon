@@ -1,5 +1,10 @@
 package com.cocakova.charon.presentation.terminal
 
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.produceState
+import com.cocakova.charon.presentation.components.BrailleSpinner
 import androidx.compose.foundation.layout.sizeIn
 import com.cocakova.charon.theme.Hulls
 import androidx.compose.foundation.text.BasicTextField
@@ -141,6 +146,8 @@ fun TerminalScreen(
     onForwardLink: suspend (String, Int) -> Result<Int> = { _, _ -> Result.failure(IllegalStateException("no crossing")) },
     /** Open the hold at a far-shore path (a tapped file:// link). */
     onFilesAt: (String) -> Unit = {},
+    /** A crossing's mooring colour (its lantern), if it has one: the prod tint. */
+    hostColorOf: (String) -> String? = { null },
     modifier: Modifier = Modifier,
 ) {
     val state by session.state.collectAsState()
@@ -471,6 +478,11 @@ fun TerminalScreen(
             onDock = { leaveTerminal(onDock) },
             onFiles = { leaveTerminal(onFiles) },
             onForwards = { showForwards = true },
+            tintOf = { id ->
+                hostColorOf(id)?.let { hex ->
+                    runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+                }
+            },
         )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // The IME anchor fills the terminal area (a sane rect for cursor-anchor
@@ -759,7 +771,11 @@ fun TerminalScreen(
                 when (s) {
                     is TerminalSession.State.Connecting -> ConnectingPill("crossing the Styx…")
                     is TerminalSession.State.Reconnecting ->
-                        ReconnectingOverlay(attempt = s.attempt, onGiveUp = { onClose(session.id) })
+                        ReconnectingOverlay(
+                            state = s,
+                            onCrossNow = { onReconnect(session.id) },
+                            onGiveUp = { onClose(session.id) },
+                        )
                     is TerminalSession.State.Disconnected ->
                         if (s.clean) {
                             // You stepped off the ferry — a quick flourish, then the Dock
@@ -890,6 +906,7 @@ private fun SessionSwitcher(
     onDock: () -> Unit,
     onFiles: () -> Unit,
     onForwards: () -> Unit,
+    tintOf: (String) -> Color? = { null },
 ) {
     Column {
         Row(
@@ -918,6 +935,7 @@ private fun SessionSwitcher(
             sessions.forEach { s ->
                 SessionTab(
                     session = s,
+                    tint = tintOf(s.id),
                     active = s.id == activeId,
                     onClick = { onSwitch(s.id) },
                     onClose = { onClose(s.id) },
@@ -966,47 +984,84 @@ private fun SessionSwitcher(
                 )
             }
         }
-        Waterline()
+        sessions.firstOrNull { it.id == activeId }?.let { Waterline(it, tintOf(it.id)) }
     }
 }
 
 /**
- * The waterline: where the tab row meets the water, a slow teal ripple stands in for
- * the old hairline divider. Amplitude is under 2dp and the drift takes seven seconds
- * — it reads as a plain rule until you look, which is the point.
+ * The waterline: where the tab row meets the water. It reads the crossing's output
+ * rate: dead flat while nothing arrives (and then it draws once and stops — no
+ * frames at all), a low swell under a trickle, choppy in a flood. A host with a
+ * lantern colour tints it, so a crossing to an ember-tagged host reads as "prod".
  */
 @Composable
-private fun Waterline() {
-    val phase by rememberInfiniteTransition(label = "waterline").animateFloat(
-        initialValue = 0f,
-        targetValue = TWO_PI,
-        animationSpec = infiniteRepeatable(
-            animation = tween(7000, easing = LinearEasing),
-        ),
-        label = "waterlinePhase",
-    )
+private fun Waterline(session: TerminalSession, tint: Color?) {
+    val awake by produceState(false, session) {
+        session.outputTick.collectLatest {
+            value = true
+            delay(1500)
+            value = false
+        }
+    }
+    var phase by remember(session.id) { mutableStateOf(0f) }
+    var swell by remember(session.id) { mutableStateOf(0f) }
+    LaunchedEffect(session.id, awake) {
+        var lastBytes = session.bytesIn
+        var lastNs = 0L
+        var rate = 0f
+        if (!awake) {
+            // Settle: the swell dies away over half a second, then the frames stop.
+            while (swell > 0.01f) withFrameNanos { swell *= 0.88f }
+            swell = 0f
+            return@LaunchedEffect
+        }
+        while (true) {
+            withFrameNanos { t ->
+                if (lastNs != 0L) {
+                    val dt = (t - lastNs) / 1e9f
+                    val bytes = session.bytesIn
+                    val inst = (bytes - lastBytes) / dt.coerceAtLeast(0.001f)
+                    lastBytes = bytes
+                    rate = rate * 0.9f + inst * 0.1f
+                    // log scale: ~100 B/s is a ripple, ~1 MB/s is a full sea.
+                    val target = ((kotlin.math.log10(rate.coerceAtLeast(1f)) - 1.5f) / 4.5f).coerceIn(0.08f, 1f)
+                    swell += (target - swell) * 0.12f
+                    phase += dt * (1.2f + 6f * swell)
+                }
+                lastNs = t
+            }
+        }
+    }
     val still = MaterialTheme.colorScheme.surfaceVariant
-    val ripple = Styx.water.copy(alpha = 0.30f)
-    // One Path for the ripple's whole life — this draws every frame forever, and a
-    // fresh allocation per frame is pure garbage-collector chum.
+    val water = (tint ?: Styx.water)
     val path = remember { Path() }
     Canvas(Modifier.fillMaxWidth().height(4.dp)) {
         val mid = size.height / 2f
-        val amp = size.height * 0.32f
-        val wavelength = 26.dp.toPx()
+        val w = swell
+        if (w <= 0.01f) {
+            drawLine(still, Offset(0f, mid), Offset(size.width, mid), strokeWidth = 1.dp.toPx())
+            drawLine(water.copy(alpha = 0.30f), Offset(0f, mid), Offset(size.width, mid), strokeWidth = 1.dp.toPx())
+            return@Canvas
+        }
+        val amp = size.height * 0.45f * w
+        val wavelength = 26.dp.toPx() * (1.2f - 0.5f * w)
         val step = 3.dp.toPx()
         path.reset()
         var x = 0f
-        path.moveTo(0f, mid + amp * sin(-phase))
+        fun y(at: Float) = mid + amp * (sin(at / wavelength * TWO_PI - phase) +
+            0.35f * w * sin(at / wavelength * TWO_PI * 2.7f + phase * 1.9f))
+        path.moveTo(0f, y(0f))
         while (x < size.width + step) {
-            path.lineTo(x, mid + amp * sin(x / wavelength * TWO_PI - phase))
+            path.lineTo(x, y(x))
             x += step
         }
-        // The still base keeps the rule legible; the teal ripple breathes over it.
         drawPath(path, still, style = Stroke(width = 1.dp.toPx()))
-        drawPath(path, ripple, style = Stroke(width = 1.dp.toPx()))
+        drawPath(path, water.copy(alpha = 0.30f + 0.4f * w), style = Stroke(width = 1.dp.toPx()))
     }
 }
+
+/** A tab's dot breathes this long after its crossing last spoke, then holds still. */
+private const val BREATH_AFTER_OUTPUT_MS = 8_000L
 
 private const val TWO_PI = (2 * Math.PI).toFloat()
 
@@ -1014,6 +1069,7 @@ private const val TWO_PI = (2 * Math.PI).toFloat()
 @Composable
 private fun SessionTab(
     session: TerminalSession,
+    tint: Color? = null,
     active: Boolean,
     onClick: () -> Unit,
     onClose: () -> Unit,
@@ -1022,6 +1078,7 @@ private fun SessionTab(
     // A command done or a call in a tab you aren't on: its dot flashes gold (ashore,
     // a call) or ember (aground), then keeps that hue until you step aboard.
     val signal by session.signal.collectAsState()
+    val echo by session.echoMs.collectAsState()
     var unseen by remember(session.id) { mutableStateOf<TerminalSession.SignalKind?>(null) }
     val flash = remember(session.id) { Animatable(1f) }
     val firstSignal = remember(session.id) { signal?.seq }
@@ -1043,7 +1100,10 @@ private fun SessionTab(
             unseen == TerminalSession.SignalKind.AGROUND -> Styx.ember
             unseen != null -> Styx.coin
             else -> when (state) {
-            is TerminalSession.State.Connected -> Styx.water
+            // The latency lantern: the host's own colour (or the water), warming
+            // toward ember as keystroke-to-echo time climbs past ~80 ms.
+            is TerminalSession.State.Connected ->
+                androidx.compose.ui.graphics.lerp(tint ?: Styx.water, Styx.ember, ((echo - 80) / 320f).coerceIn(0f, 1f) * 0.8f)
             is TerminalSession.State.Connecting -> Styx.coin
             is TerminalSession.State.Reconnecting -> Styx.coin
             is TerminalSession.State.Disconnected -> Styx.ember
@@ -1052,23 +1112,40 @@ private fun SessionTab(
         animationSpec = tween(400),
         label = "tabDot",
     )
-    // Breathe while connected; pulse while redialing — anything settled holds steady.
-    // The infinite transition only exists while a dot actually breathes: idle tabs
-    // must not each keep an always-running animation invalidating frames.
-    val dotAlpha = when (state) {
-        is TerminalSession.State.Connected, is TerminalSession.State.Reconnecting -> {
-            val breathe by rememberInfiniteTransition(label = "breathe").animateFloat(
-                initialValue = 0.45f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1300, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "breatheAlpha",
-            )
-            breathe
+    // Breathe while the crossing is busy (output in the last few seconds) — slower
+    // as the echo slows; pulse while redialing; anything quiet holds steady, so an
+    // idle tab costs no frames at all.
+    val busy by produceState(false, session) {
+        session.outputTick.collectLatest {
+            value = true
+            delay(BREATH_AFTER_OUTPUT_MS)
+            value = false
         }
-        else -> 1f
+    }
+    val breathing = state is TerminalSession.State.Reconnecting ||
+        (state is TerminalSession.State.Connected && busy)
+    val dotAlpha = if (breathing) {
+        val period = 1300 + (echo.coerceIn(0, 600) * 2.5f).toInt()
+        val breathe by rememberInfiniteTransition(label = "breathe").animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(if (state is TerminalSession.State.Reconnecting) 700 else period, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "breatheAlpha",
+        )
+        breathe
+    } else {
+        1f
+    }
+    // A long press asks the lantern what it's reading.
+    var showEcho by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(showEcho) {
+        if (showEcho) {
+            delay(1800)
+            showEcho = false
+        }
     }
 
     Row(
@@ -1078,7 +1155,11 @@ private fun SessionTab(
                 if (active) MaterialTheme.colorScheme.surfaceVariant
                 else MaterialTheme.colorScheme.surface,
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { showEcho = true },
+                onLongClickLabel = "read the latency lantern",
+            )
             .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1091,7 +1172,7 @@ private fun SessionTab(
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            title.trim().ifEmpty { session.label },
+            if (showEcho) (if (echo > 0) "echo $echo ms" else "echo — type to time it") else title.trim().ifEmpty { session.label },
             style = MaterialTheme.typography.labelMedium,
             color = if (active) MaterialTheme.colorScheme.onSurface else Styx.mist,
             maxLines = 1,
@@ -1539,44 +1620,63 @@ private const val OAR_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
  * count, and a way out. The ferry turns back into the mist rather than beaching.
  */
 @Composable
-private fun ReconnectingOverlay(attempt: Int, onGiveUp: () -> Unit) {
-    val pulse by rememberInfiniteTransition(label = "recross").animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(760, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "recrossPulse",
-    )
+private fun ReconnectingOverlay(
+    state: TerminalSession.State.Reconnecting,
+    onCrossNow: () -> Unit,
+    onGiveUp: () -> Unit,
+) {
+    // Honest about the wait: the last screen stays readable under a light veil, the
+    // next try counts down in seconds, and a returning network says so.
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.nextTryAtMs) {
+        while (state.nextTryAtMs > System.currentTimeMillis()) {
+            now = System.currentTimeMillis()
+            delay(250)
+        }
+        now = System.currentTimeMillis()
+    }
+    val secondsLeft = ((state.nextTryAtMs - now + 999) / 1000).coerceAtLeast(0)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Styx.night.copy(alpha = 0.82f)),
-        contentAlignment = Alignment.Center,
+            .background(Styx.night.copy(alpha = 0.28f)),
+        contentAlignment = Alignment.TopCenter,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .graphicsLayer { alpha = pulse }
-                    .clip(CircleShape)
-                    .background(Styx.coin),
-            )
-            Spacer(Modifier.height(14.dp))
+        Column(
+            modifier = Modifier
+                .padding(top = 56.dp)
+                .clip(Hulls.card)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                .border(1.dp, Styx.coin.copy(alpha = 0.5f), Hulls.card)
+                .padding(horizontal = 18.dp, vertical = 12.dp)
+                .semantics(mergeDescendants = true) {},
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (secondsLeft == 0L) {
+                    BrailleSpinner(color = Styx.coin, label = "re-crossing")
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    when {
+                        state.networkBack -> "network's back — crossing now"
+                        secondsLeft > 0 -> "adrift — next crossing in ${secondsLeft}s"
+                        else -> "re-crossing the Styx…"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.networkBack) Styx.water else MaterialTheme.colorScheme.onSurface,
+                )
+            }
             Text(
-                "re-crossing the Styx…",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                "attempt $attempt",
-                style = MaterialTheme.typography.bodySmall,
+                "attempt ${state.attempt} · the screen above is as the crossing left it",
+                style = MaterialTheme.typography.labelSmall,
                 color = Styx.mist,
                 modifier = Modifier.padding(top = 4.dp),
             )
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onGiveUp) { Text("give up", color = Styx.mist) }
+            Row {
+                if (secondsLeft > 0) TextButton(onClick = onCrossNow) { Text("cross now", color = Styx.water) }
+                TextButton(onClick = onGiveUp) { Text("give up", color = Styx.mist) }
+            }
         }
     }
 }
