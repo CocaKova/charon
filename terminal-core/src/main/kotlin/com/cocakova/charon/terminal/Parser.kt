@@ -36,6 +36,9 @@ interface ParserSink {
     fun dcsHook(params: CsiParams, collected: String, final: Char)
     fun dcsPut(codePoint: Int)
     fun dcsUnhook()
+
+    /** A DCS string cancelled by CAN/SUB: discard what [dcsPut] gathered, answer nothing. */
+    fun dcsCancel() = dcsUnhook()
 }
 
 /**
@@ -93,7 +96,10 @@ class Parser(private val sink: ParserSink) {
         // "Anywhere" transitions take priority over per-state handling.
         when (codePoint) {
             0x18, 0x1A -> { // CAN / SUB: abort any sequence, execute, back to ground
-                abortDcsIfActive()
+                if (inDcsPassthrough) {
+                    inDcsPassthrough = false
+                    sink.dcsCancel()
+                }
                 sink.execute(codePoint)
                 toGround()
                 return

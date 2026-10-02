@@ -76,6 +76,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cocakova.charon.autocomplete.CommandGate
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -248,6 +251,53 @@ fun TerminalScreen(
         onDispose { inputView?.hideKeyboard() }
     }
 
+    // Focus events (DECSET 1004): this tab has the traveller's eye while it's the
+    // one on screen and the app is in front. A tab switch hands focus over (the old
+    // effect reports out, the new one in); leaving for the Dock or another app
+    // reports out. Programs that never asked hear nothing.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(session, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> session.focusChanged(true)
+                Lifecycle.Event.ON_PAUSE -> session.focusChanged(false)
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            session.focusChanged(false)
+        }
+    }
+
+    // The bell: a light tick under the ripple TerminalView draws. Rate-limited at
+    // the session, still-able at the helm.
+    val bellOn = remember { prefs.getBoolean("bell", true) }
+    val haptic = LocalHapticFeedback.current
+    val bellTick by session.bell.collectAsState()
+    val bellNow = session.bell.value.also { bellTick }
+    var bellHeard by remember(session.id) { mutableStateOf(bellNow) }
+    LaunchedEffect(session.id, bellNow) {
+        if (bellNow == bellHeard) return@LaunchedEffect
+        bellHeard = bellNow
+        if (bellOn) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+    }
+
+    // OSC 52: a yank from the far shore, behind consent per user@host.
+    val clipTick by session.clipboardOffer.collectAsState()
+    val clipOffer = session.clipboardOffer.value.also { clipTick }
+    var clipAsking by remember(session.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(session.id, clipOffer) {
+        val text = clipOffer ?: return@LaunchedEffect
+        session.clipboardOffer.value = null
+        when (ClipboardConsent.of(prefs, session.label)) {
+            ClipboardConsent.ALWAYS -> clipboard.setText(AnnotatedString(text))
+            ClipboardConsent.NEVER -> {}
+            else -> clipAsking = text
+        }
+    }
+
     // Keep the screen lit at sea (opt-in from the helm): a terminal you're watching
     // shouldn't doze mid-tail. The flag lifts the moment the terminal leaves.
     val activityWindow = (context as? android.app.Activity)?.window
@@ -396,6 +446,7 @@ fun TerminalScreen(
                 session = session,
                 modifier = Modifier.fillMaxSize(),
                 fontSizeSp = fontSizeSp,
+                bellRipples = bellOn,
                 onRequestFocus = {
                     runCatching { inputFocus.requestFocus() }
                     inputView?.showKeyboard()
@@ -669,6 +720,27 @@ fun TerminalScreen(
                 } else {
                     TerminalInputView.Mode.RAW
                 }
+            },
+        )
+    }
+
+    clipAsking?.let { text ->
+        ClipboardSheet(
+            shore = session.label,
+            text = text,
+            onAllowOnce = {
+                clipboard.setText(AnnotatedString(text))
+                clipAsking = null
+            },
+            onAlways = {
+                ClipboardConsent.set(prefs, session.label, ClipboardConsent.ALWAYS)
+                clipboard.setText(AnnotatedString(text))
+                clipAsking = null
+            },
+            onRefuse = { clipAsking = null },
+            onNever = {
+                ClipboardConsent.set(prefs, session.label, ClipboardConsent.NEVER)
+                clipAsking = null
             },
         )
     }

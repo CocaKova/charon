@@ -23,6 +23,8 @@ class TerminalEmulator(
     private val initialBg: Int = 0x000000,
     /** Reported by XTVERSION so remote tools can recognise us and light up. */
     private val versionName: String = "1.0",
+    /** Monotonic nanoseconds — the synchronized-output timeout reads it. */
+    private val clock: () -> Long = System::nanoTime,
 ) : ParserSink {
 
     var cols: Int = initialCols
@@ -65,6 +67,18 @@ class TerminalEmulator(
     var reverseWraparound = false; private set // DECSET 45 (xterm reverse-wrap)
     var cursorStyle = 1; private set        // DECSCUSR: 0/1 blink block … 6 steady bar
     private var linefeedMode = false        // LNM
+
+    /**
+     * Synchronized output (mode 2026): the program is mid-frame and asked us not to
+     * paint until it says done. Held at most [SYNC_TIMEOUT_NANOS], so a program
+     * that dies mid-frame can never freeze the glass.
+     */
+    var synchronizedOutput = false; private set
+    @Volatile private var syncSince = 0L
+
+    /** True while the renderer should keep showing the last finished frame. */
+    fun syncHolding(now: Long = clock()): Boolean =
+        synchronizedOutput && now - syncSince < SYNC_TIMEOUT_NANOS
 
     // Kitty keyboard protocol: one enhancement stack per screen (the spec's rule),
     // so flags a TUI pushes on the alternate screen never follow you back out.
@@ -138,6 +152,13 @@ class TerminalEmulator(
     /** OSC 7 relay: fired with each believed report (null = cleared), from the
      *  writer's thread. Malformed reports are dropped before they get here. */
     var onCwd: ((ShellCwd?) -> Unit)? = null
+
+    /**
+     * OSC 52 relay: the remote asked to put [text] on the clipboard (a tmux or nvim
+     * yank). Never applied here — the host decides, behind the traveller's consent.
+     * Requests to *read* the clipboard (`OSC 52 ; c ; ?`) are never answered.
+     */
+    var onClipboard: ((String) -> Unit)? = null
 
     /** Bumped on every visible mutation; renderers conflate on this. */
     var generation = 0L
@@ -324,7 +345,11 @@ class TerminalEmulator(
             "<" -> if (final == 'u') kittyKeys.pop(params.getOr1(0))   // kitty keyboard: pop
             "=" -> if (final == 'u') kittyKeys.set(params.get(0, 0), params.get(1, 1))
             "!" -> if (final == 'p') softReset()                  // DECSTR
-            " " -> if (final == 'q') cursorStyle = params.get(0, 1) // DECSCUSR
+            " " -> if (final == 'q') cursorStyle = params.get(0, 1).let { if (it in 0..6) it else 1 } // DECSCUSR
+            // DECRQM: how a program asks "do you know this mode, and is it on?" —
+            // neovim and friends ask about 2026 before trusting synchronized output.
+            "?$" -> if (final == 'p') params.get(0, 0).let { m -> onResponse("$CSI?$m;${decModeState(m)}\$y") }
+            "$" -> if (final == 'p') params.get(0, 0).let { m -> onResponse("$CSI$m;${ansiModeState(m)}\$y") }
             else -> {}
         }
         touch()
@@ -433,7 +458,10 @@ class TerminalEmulator(
             }
             // iTerm2 inline images — what `imgcat` speaks.
             1337 -> applyGraphics(apparitions.iterm2(arg, gridFacts()))
-            else -> {} // OSC 52 clipboard lands in v0.4 behind consent
+            // OSC 52 ; selection ; base64 — a yank for the clipboard. Reads ("?")
+            // are refused: the phone's clipboard is not the far shore's to see.
+            52 -> oscClipboard(arg)
+            else -> {}
         }
         touch()
     }
@@ -444,9 +472,44 @@ class TerminalEmulator(
         touch()
     }
 
-    override fun dcsHook(params: CsiParams, collected: String, final: Char) {}
-    override fun dcsPut(codePoint: Int) {}
-    override fun dcsUnhook() {}
+    // ------------------------------------------------------------------ DCS queries
+
+    /** Which DCS request is being gathered, if any we answer. */
+    private var dcsKind = DCS_NONE
+    private val dcsData = StringBuilder()
+
+    override fun dcsHook(params: CsiParams, collected: String, final: Char) {
+        dcsData.setLength(0)
+        dcsKind = when {
+            collected == "$" && final == 'q' -> DCS_DECRQSS
+            collected == "+" && final == 'q' -> DCS_XTGETTCAP
+            else -> DCS_NONE
+        }
+    }
+
+    override fun dcsPut(codePoint: Int) {
+        if (dcsKind != DCS_NONE && dcsData.length < MAX_DCS_QUERY) dcsData.appendCodePoint(codePoint)
+    }
+
+    override fun dcsUnhook() {
+        val kind = dcsKind
+        dcsKind = DCS_NONE
+        when (kind) {
+            DCS_DECRQSS -> onResponse(TermQueries.decrqss(dcsData.toString(), this))
+            DCS_XTGETTCAP -> TermQueries.xtgettcap(dcsData.toString()).forEach(onResponse)
+        }
+        dcsData.setLength(0)
+    }
+
+    override fun dcsCancel() {
+        dcsKind = DCS_NONE
+        dcsData.setLength(0)
+    }
+
+    /** The pen as SGR parameters (DECRQSS `m`): how a program reads back what it set. */
+    internal fun penSgr(): String = TermQueries.sgrOf(attrs, penUl)
+
+    internal val scrollRegion: Pair<Int, Int> get() = scrollTop to scrollBottom
 
     // ------------------------------------------------------------- apparitions
 
@@ -708,7 +771,42 @@ class TerminalEmulator(
             1048 -> if (on) saveCursor() else restoreCursor()
             1049 -> switchAltScreen(on, saveCursorWithIt = true)
             2004 -> bracketedPaste = on
+            2026 -> {
+                if (on && !synchronizedOutput) syncSince = clock()
+                synchronizedOutput = on
+            }
         }
+    }
+
+    /** DECRPM's answer for a DEC private mode: 1 set, 2 reset, 0 unknown, 4 never. */
+    private fun decModeState(mode: Int): Int {
+        fun b(v: Boolean) = if (v) 1 else 2
+        return when (mode) {
+            1 -> b(cursorKeysApp)
+            5 -> b(reverseVideo)
+            6 -> b(originMode)
+            7 -> b(autowrap)
+            9 -> b(mouseMode == 9)
+            12 -> b(cursorStyle == 0 || cursorStyle % 2 == 1)
+            25 -> b(cursorVisible)
+            45 -> b(reverseWraparound)
+            47, 1047, 1049 -> b(usingAlt)
+            1000 -> b(mouseMode == 1000)
+            1002 -> b(mouseMode == 1002)
+            1003 -> b(mouseMode == 1003)
+            1004 -> b(focusEvents)
+            1005 -> 4
+            1006 -> b(mouseSgr)
+            2004 -> b(bracketedPaste)
+            2026 -> b(synchronizedOutput)
+            else -> 0
+        }
+    }
+
+    private fun ansiModeState(mode: Int): Int = when (mode) {
+        4 -> if (insertMode) 1 else 2
+        20 -> if (linefeedMode) 1 else 2
+        else -> 0
     }
 
     private fun switchAltScreen(toAlt: Boolean, saveCursorWithIt: Boolean) {
@@ -818,6 +916,8 @@ class TerminalEmulator(
         focusEvents = false
         reverseVideo = false
         linefeedMode = false
+        synchronizedOutput = false
+        cursorStyle = 1
         title = ""
         onTitle("")
         palette.reset()
@@ -993,6 +1093,18 @@ class TerminalEmulator(
         return hyperlinks.intern(uri, idParam)
     }
 
+    private fun oscClipboard(arg: String) {
+        val sep = arg.indexOf(';')
+        if (sep < 0) return
+        val data = arg.substring(sep + 1)
+        if (data == "?") return // a read request: never answered
+        if (data.length > MAX_CLIPBOARD_B64) return
+        val bytes = WireBase64.decode(data) ?: return
+        val text = String(bytes, Charsets.UTF_8)
+        if (text.isEmpty()) return
+        onClipboard?.invoke(text)
+    }
+
     private fun oscPalette(arg: String) {
         // OSC 4;index;spec — possibly repeated pairs
         val parts = arg.split(';')
@@ -1086,6 +1198,17 @@ class TerminalEmulator(
 
         /** Links refused after a sweep that couldn't make room, before the next try. */
         private const val LINK_SWEEP_COOLDOWN = 256
+
+        /** A synchronized frame left open longer than this is painted anyway. */
+        const val SYNC_TIMEOUT_NANOS = 150_000_000L
+
+        /** Clipboard payload cap: ~1.5 MB of base64, ~1 MB of text. */
+        private const val MAX_CLIPBOARD_B64 = 1_500_000
+
+        private const val DCS_NONE = 0
+        private const val DCS_DECRQSS = 1
+        private const val DCS_XTGETTCAP = 2
+        private const val MAX_DCS_QUERY = 4096
 
         /** Sentinel returned by [drainDirty] meaning "redraw everything". */
         val ALL_DIRTY = BitSet(0)

@@ -69,6 +69,7 @@ fun SettingsSheet(
     }
     var keepLit by remember { mutableStateOf(prefs.getBoolean("keep_screen_on", false)) }
     var horn by remember { mutableStateOf(prefs.getBoolean("horn", true)) }
+    var bell by remember { mutableStateOf(prefs.getBoolean("bell", true)) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -344,6 +345,35 @@ fun SettingsSheet(
                     onCheckedChange = {
                         horn = it
                         prefs.edit().putBoolean("horn", it).apply()
+                    },
+                    colors = SwitchDefaults.colors(checkedTrackColor = Styx.water),
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // ---- The bell ---------------------------------------------------------
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "the bell",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "a ring opening from the cursor and a light tick when the far side rings — never more than a few a second",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Styx.mist,
+                    )
+                }
+                Switch(
+                    checked = bell,
+                    onCheckedChange = {
+                        bell = it
+                        prefs.edit().putBoolean("bell", it).apply()
                     },
                     colors = SwitchDefaults.colors(checkedTrackColor = Styx.water),
                 )

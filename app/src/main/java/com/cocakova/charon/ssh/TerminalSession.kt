@@ -68,7 +68,7 @@ class TerminalSession(
         cols, rows,
         onResponse = { sendText(it) }, // DA/DSR/CPR replies go straight back out
         onTitle = { title.value = it },
-        onBell = {},
+        onBell = { ring() },
         basePalette = basePalette,
         initialFg = initialFg,
         initialBg = initialBg,
@@ -83,6 +83,50 @@ class TerminalSession(
     /** Bumped once per remote burst — the renderer's idle loop sleeps on this
      *  instead of riding the frame clock while nothing is arriving. */
     val outputTick = MutableStateFlow(0L)
+
+    /** DECSCUSR as last set (1 = blinking block … 6 = steady bar); the renderer morphs to it. */
+    val cursorStyle = MutableStateFlow(1)
+
+    private val _bell = MutableStateFlow(0L)
+    /** Ticks once per bell that got through the rate limit — a ripple and a tick each. */
+    val bell: StateFlow<Long> = _bell
+    private var bellAt = Long.MIN_VALUE
+
+    /** A BEL flood (`yes $'\a'`, a broken prompt) must not become a buzzer. */
+    private fun ring() {
+        val now = clock()
+        if (bellAt != Long.MIN_VALUE && now - bellAt < BELL_GAP_NS) return
+        bellAt = now
+        _bell.value += 1
+    }
+
+    /**
+     * A yank the far shore asked to put on the clipboard (OSC 52) — waiting on the
+     * traveller's consent, never applied by the session itself. Latest wins.
+     */
+    val clipboardOffer = MutableStateFlow<String?>(null)
+
+    /** Focus as last reported to a program that asked (DECSET 1004), or null. */
+    private var focusReported: Boolean? = null
+
+    /**
+     * This terminal gained or lost the traveller's eye (the tab, the app). Reported
+     * as `CSI I` / `CSI O` only to a program that asked for focus events — vim
+     * re-reads changed files on it, tmux passes it to the pane.
+     */
+    fun focusChanged(focused: Boolean) {
+        val asked = synchronized(lock) { term.focusEvents }
+        if (!asked) {
+            focusReported = null
+            return
+        }
+        if (focusReported == focused) return
+        focusReported = focused
+        sendText(if (focused) "\u001b[I" else "\u001b[O")
+    }
+
+    /** The mouse mode the remote asked for (0 off, else 9/1000/1002/1003). */
+    val mouseMode: Int get() = synchronized(lock) { term.mouseMode }
 
     fun feedRemote(bytes: ByteArray, offset: Int, length: Int) {
         synchronized(lock) {
@@ -151,6 +195,7 @@ class TerminalSession(
             }
         }
         // Outside the lock: waking the renderer must never hold up the reader.
+        cursorStyle.value = term.cursorStyle
         outputTick.value += 1
     }
 
@@ -261,6 +306,7 @@ class TerminalSession(
     var onCommandDone: ((command: String, exitCode: Int?, durationMs: Long) -> Unit)? = null
 
     init {
+        term.onClipboard = { clipboardOffer.value = it }
         term.onCwd = {
             cwdReported = true
             _cwd.value = it
@@ -682,5 +728,8 @@ class TerminalSession(
     private companion object {
         /** How many bottom rows the lading reads. */
         const val CARGO_TAIL_ROWS = 8
+
+        /** The closest two bells may ring. */
+        const val BELL_GAP_NS = 400_000_000L
     }
 }

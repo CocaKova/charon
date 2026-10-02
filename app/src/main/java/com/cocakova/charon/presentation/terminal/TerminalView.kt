@@ -4,6 +4,9 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -38,6 +41,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 import com.cocakova.charon.R
 import com.cocakova.charon.ssh.TerminalSession
 import com.cocakova.charon.terminal.Apparition
@@ -60,6 +64,8 @@ fun TerminalView(
     session: TerminalSession,
     modifier: Modifier = Modifier,
     fontSizeSp: Float = 14f,
+    /** The bell draws its ripple (the helm can still it). */
+    bellRipples: Boolean = true,
     onRequestFocus: () -> Unit = {},
     onZoom: (Float) -> Unit = {},
     /** Decoded shades, shared with the lightbox so a tap costs no second decode. */
@@ -85,6 +91,35 @@ fun TerminalView(
     val selection by session.selection.collectAsState()
     val scrollOffset by session.scrollOffset.collectAsState()
 
+    // The cursor's shape (DECSCUSR) morphs rather than snaps: vim's insert bar grows
+    // out of the block and shrinks back in ~120 ms. Read through the flow's own
+    // value so a tab switch never borrows the last tab's shape for a frame.
+    val styleTick by session.cursorStyle.collectAsState()
+    val cursorShape = cursorShapeOf(session.cursorStyle.value.also { styleTick })
+    var shapeFrom by remember(session) { mutableStateOf(cursorShape) }
+    var shapeTo by remember(session) { mutableStateOf(cursorShape) }
+    val morph = remember(session) { Animatable(1f) }
+    LaunchedEffect(session, cursorShape) {
+        if (cursorShape == shapeTo) return@LaunchedEffect
+        shapeFrom = shapeTo
+        shapeTo = cursorShape
+        morph.snapTo(0f)
+        morph.animateTo(1f, tween(CURSOR_MORPH_MS, easing = FastOutSlowInEasing))
+    }
+
+    // The bell as a ripple: one teal ring opening from the cursor cell, then still.
+    val bellTick by session.bell.collectAsState()
+    val bellNow = session.bell.value.also { bellTick }
+    var bellSeen by remember(session) { mutableLongStateOf(bellNow) }
+    val ripple = remember(session) { Animatable(1f) }
+    LaunchedEffect(session, bellNow) {
+        if (bellNow == bellSeen) return@LaunchedEffect
+        bellSeen = bellNow
+        if (!bellRipples) return@LaunchedEffect
+        ripple.snapTo(0f)
+        ripple.animateTo(1f, tween(BELL_RIPPLE_MS, easing = FastOutSlowInEasing))
+    }
+
     // Two-gear render loop. Hot: ride the frame clock while output is streaming
     // (floods skip straight to the latest grid, cursor sits solid). Idle: a bare
     // withFrameNanos loop keeps the Choreographer pumping at the display's refresh
@@ -104,7 +139,9 @@ fun TerminalView(
                 while (true) {
                     val now = withFrameNanos { it }
                     val g = session.term.generation
-                    if (g != lastDrawn) {
+                    // Synchronized output (2026): the program is mid-frame; keep the
+                    // last finished one on the glass until it says done (or times out).
+                    if (g != lastDrawn && !session.term.syncHolding()) {
                         lastDrawn = g
                         lastChangeNanos = now // output resets the blink: cursor solid while streaming
                         frame++
@@ -123,7 +160,10 @@ fun TerminalView(
                 var tick = session.outputTick.value
                 if (session.term.generation != lastDrawn) continue
                 while (true) {
-                    val woke = withTimeoutOrNull(CURSOR_BLINK_NANOS / 1_000_000) {
+                    // A steady cursor (DECSCUSR 2/4/6) has nothing to blink: park on
+                    // the wire alone, no timer at all.
+                    val steady = cursorShapeSteady(session.term.cursorStyle)
+                    val woke = withTimeoutOrNull(if (steady) Long.MAX_VALUE else CURSOR_BLINK_NANOS / 1_000_000) {
                         session.outputTick.first { it != tick }
                     }
                     if (woke != null) break // the remote spoke — back to the frame clock
@@ -276,6 +316,7 @@ fun TerminalView(
             .pointerInput(session, paints) {
                 var mode = DragMode.NONE
                 var startCell = TextSelection.Cell(0, 0)
+                var lastMouseCell = TextSelection.Cell(0, 0)
                 var accum = 0f
                 detectDragGestures(
                     onDragStart = { pos ->
@@ -284,12 +325,32 @@ fun TerminalView(
                         val sel = session.selection.value
                         mode = when {
                             sel != null && nearSelection(sel, selCellOf(pos)) -> DragMode.SELECT
+                            // An app that reports drags (1002/1003) gets one when the
+                            // finger sets off sideways; up and down stay the wheel, so
+                            // scrolling tmux or vim feels exactly as it always did.
+                            session.mouseMode >= 1002 -> DragMode.MOUSE_PENDING
                             session.mouseActive -> DragMode.WHEEL
                             else -> DragMode.SCROLL
                         }
                     },
                     onDrag = { change, drag ->
+                        if (mode == DragMode.MOUSE_PENDING) {
+                            mode = if (abs(drag.x) > abs(drag.y)) {
+                                session.mouseDown(startCell)
+                                lastMouseCell = startCell
+                                DragMode.MOUSE_DRAG
+                            } else {
+                                DragMode.WHEEL
+                            }
+                        }
                         when (mode) {
+                            DragMode.MOUSE_DRAG -> {
+                                val cell = viewCellOf(change.position)
+                                if (cell != lastMouseCell) {
+                                    lastMouseCell = cell
+                                    session.mouseDrag(cell)
+                                }
+                            }
                             DragMode.SELECT -> {
                                 session.extendSelection(selCellOf(change.position))
                                 // Past the glass top/bottom: crawl the viewport so the
@@ -320,30 +381,52 @@ fun TerminalView(
                                     session.scrollBy(-1); accum += paints.cellHeight
                                 }
                             }
-                            DragMode.NONE -> {}
+                            DragMode.NONE, DragMode.MOUSE_PENDING -> {}
                         }
                     },
-                    onDragEnd = { mode = DragMode.NONE; selEdgeDrag = 0 },
-                    onDragCancel = { mode = DragMode.NONE; selEdgeDrag = 0 },
+                    onDragEnd = {
+                        if (mode == DragMode.MOUSE_DRAG) session.mouseUp(lastMouseCell)
+                        mode = DragMode.NONE
+                        selEdgeDrag = 0
+                    },
+                    onDragCancel = {
+                        if (mode == DragMode.MOUSE_DRAG) session.mouseUp(lastMouseCell)
+                        mode = DragMode.NONE
+                        selEdgeDrag = 0
+                    },
                 )
             },
     ) {
         frame // subscribe: redraw whenever the emulator generation advances
         selection // subscribe: redraw when the selection changes
         scrollOffset // subscribe: redraw when the viewport scrolls
+        val cursor = CursorLook(shapeFrom, shapeTo, morph.value, ripple.value)
         drawIntoCanvas { canvas ->
             synchronized(session.lock) {
                 drawTerminal(
                     canvas.nativeCanvas, session.term, paints,
                     size.width, size.height, cursorOn, selection, scrollOffset,
-                    session.cursorColor, apparitions, search, highlightLink,
+                    session.cursorColor, apparitions, search, highlightLink, cursor,
                 )
             }
         }
     }
 }
 
-private enum class DragMode { NONE, SELECT, WHEEL, SCROLL }
+private enum class DragMode { NONE, SELECT, WHEEL, SCROLL, MOUSE_PENDING, MOUSE_DRAG }
+
+/** The three cursor shapes DECSCUSR can ask for. */
+enum class CursorShape { BLOCK, UNDERLINE, BAR }
+
+/** DECSCUSR's number as a shape: 0–2 block, 3–4 underline, 5–6 bar. */
+fun cursorShapeOf(style: Int): CursorShape = when (style) {
+    3, 4 -> CursorShape.UNDERLINE
+    5, 6 -> CursorShape.BAR
+    else -> CursorShape.BLOCK
+}
+
+/** Even DECSCUSR numbers (2, 4, 6) are steady; 0, 1, 3, 5 blink. */
+fun cursorShapeSteady(style: Int): Boolean = style == 2 || style == 4 || style == 6
 
 /**
  * A drag "grabs" the selection when it starts within a row of it; anywhere else the
@@ -355,6 +438,19 @@ private fun nearSelection(sel: TerminalSession.Selection, cell: TextSelection.Ce
     val hi = maxOf(sel.anchor.row, sel.focus.row) + 1
     return cell.row in lo..hi
 }
+
+/** How the cursor is drawn this frame: mid-morph between two shapes, plus the bell's ring. */
+class CursorLook(
+    val from: CursorShape,
+    val to: CursorShape,
+    /** 0 = still [from], 1 = fully [to]. */
+    val morph: Float,
+    /** The bell's ripple, 0..1; 1 = no ripple showing. */
+    val ripple: Float,
+)
+
+private const val CURSOR_MORPH_MS = 120
+private const val BELL_RIPPLE_MS = 480
 
 /** The water's glow: the cursor is Styx.water, the one always-on brand mark in the grid. */
 private const val CURSOR_TEAL = 0x3ECFB2
@@ -428,6 +524,15 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
     /** Reused wave path — rewound, never reallocated, per run. */
     val wave = Path()
 
+    /** The cursor's rectangle, reused per frame. */
+    val cursorRect = android.graphics.RectF()
+
+    /** The bell's ring. */
+    val ring = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+    }
+
     private companion object { const val LINE_SPACING = 1.16f }
 }
 
@@ -444,6 +549,7 @@ private fun drawTerminal(
     apparitions: ApparitionCache? = null,
     search: SearchEngine.SearchState? = null,
     highlightLink: Int = 0,
+    cursorLook: CursorLook? = null,
 ) {
     val defaultFg = if (term.reverseVideo) term.defaultBg else term.defaultFg
     val defaultBg = if (term.reverseVideo) term.defaultFg else term.defaultBg
@@ -564,8 +670,10 @@ private fun drawTerminal(
         }
     }
 
-    // Cursor: teal block over text (translucent, the glyph stays readable); the
-    // blink's off-phase leaves a hairline outline so the cursor never vanishes.
+    // Cursor: the livery's accent in whatever shape the program asked for (DECSCUSR),
+    // morphing between shapes. A block is translucent so the glyph stays readable,
+    // and its blink's off-phase leaves a hairline outline — the cursor never
+    // vanishes; a bar or underline dims instead. Steady shapes don't blink at all.
     // Hidden while scrolled back — it isn't where you're looking.
     if (term.cursorVisible && scrollOffset == 0) {
         val wideCursor = CellAttrs.hasStyle(
@@ -573,19 +681,43 @@ private fun drawTerminal(
         )
         val left = term.cursorX * cw
         val top = term.cursorY * ch
-        val right = (term.cursorX + if (wideCursor) 2 else 1) * cw
+        val width = (if (wideCursor) 2 else 1) * cw
+        val look = cursorLook ?: CursorLook(CursorShape.BLOCK, CursorShape.BLOCK, 1f, 1f)
+        val on = cursorOn || cursorShapeSteady(term.cursorStyle)
+        val r = p.cursorRect
+        cursorBox(look.from, left, top, width, ch, p, r)
+        val fl = r.left; val ft = r.top; val fr = r.right; val fb = r.bottom
+        cursorBox(look.to, left, top, width, ch, p, r)
+        val t = look.morph.coerceIn(0f, 1f)
+        r.set(lerp(fl, r.left, t), lerp(ft, r.top, t), lerp(fr, r.right, t), lerp(fb, r.bottom, t))
+        val block = look.to == CursorShape.BLOCK && t >= 1f
         p.fill.color = opaque(cursorColor)
-        if (cursorOn) {
-            p.fill.alpha = 170
-            canvas.drawRect(left, top, right, top + ch, p.fill)
-        } else {
-            p.fill.alpha = 140
-            p.fill.style = Paint.Style.STROKE
-            p.fill.strokeWidth = p.cellWidth * 0.09f
-            canvas.drawRect(left, top, right, top + ch, p.fill)
-            p.fill.style = Paint.Style.FILL
+        when {
+            on -> {
+                p.fill.alpha = if (block) 170 else 225
+                canvas.drawRect(r, p.fill)
+            }
+            block -> {
+                p.fill.alpha = 140
+                p.fill.style = Paint.Style.STROKE
+                p.fill.strokeWidth = p.cellWidth * 0.09f
+                canvas.drawRect(r, p.fill)
+                p.fill.style = Paint.Style.FILL
+            }
+            else -> {
+                p.fill.alpha = 80
+                canvas.drawRect(r, p.fill)
+            }
         }
         p.fill.alpha = 255
+        // The bell: one ring opening out of the cursor cell, fading as it goes.
+        if (look.ripple < 1f) {
+            val q = look.ripple
+            p.ring.color = opaque(cursorColor)
+            p.ring.alpha = ((1f - q) * 200).toInt()
+            p.ring.strokeWidth = maxOf(1.5f, p.cellWidth * 0.12f) * (1f - 0.5f * q)
+            canvas.drawCircle(left + width / 2f, top + ch / 2f, ch * (0.55f + 3.2f * q), p.ring)
+        }
     }
 
     canvas.restore()
@@ -773,3 +905,28 @@ private fun resolveBgRaw(attrs: Long, term: TerminalEmulator, defaultBg: Int): I
     }
 
 private fun opaque(rgb: Int): Int = 0xFF000000.toInt() or (rgb and 0xFFFFFF)
+
+private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+/** A shape's box inside the cursor cell: the whole cell, a floor, or a left post. */
+private fun cursorBox(
+    shape: CursorShape,
+    left: Float,
+    top: Float,
+    width: Float,
+    height: Float,
+    p: TerminalPaints,
+    out: android.graphics.RectF,
+) {
+    when (shape) {
+        CursorShape.BLOCK -> out.set(left, top, left + width, top + height)
+        CursorShape.UNDERLINE -> {
+            val t = maxOf(2f, height * 0.12f)
+            out.set(left, top + height - t, left + width, top + height)
+        }
+        CursorShape.BAR -> {
+            val t = maxOf(2f, p.cellWidth * 0.16f)
+            out.set(left, top, left + t, top + height)
+        }
+    }
+}
