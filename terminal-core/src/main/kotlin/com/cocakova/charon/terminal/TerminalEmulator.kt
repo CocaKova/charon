@@ -142,6 +142,24 @@ class TerminalEmulator(
      */
     var onShellMark: ((Char, Int?) -> Unit)? = null
 
+    /** The command whose prompt is up or whose output is running (A … D), if rigged. */
+    var currentCommand: CommandMark? = null
+        private set
+
+    /** The command the last D finished. */
+    var lastFinished: CommandMark? = null
+        private set
+    private var nextMarkId = 1L
+
+    /**
+     * A program asked for a notification: OSC 9 ; text (iTerm2) or
+     * OSC 777 ; notify ; title ; body (rxvt/foot). Title is null for OSC 9.
+     */
+    var onNotify: ((title: String?, body: String) -> Unit)? = null
+
+    /** OSC 9 ; 4 ; state ; value — ConEmu/Windows Terminal progress (0 clear … 4 paused). */
+    var onProgress: ((state: Int, value: Int?) -> Unit)? = null
+
     /**
      * Where the shell last said it stands (OSC 7), or null when it never has — or
      * when tmux reported that the active pane has no known path (an empty OSC 7).
@@ -441,7 +459,25 @@ class TerminalEmulator(
                 if (kind != null) {
                     val extra = arg.substringAfter(';', "")
                         .takeWhile { it.isDigit() }.toIntOrNull()
+                    soundMark(kind, extra)
                     onShellMark?.invoke(kind, extra)
+                }
+            }
+            // OSC 9: ConEmu's numbered forms (9;4 is progress) or iTerm2's plain
+            // notification text. A number-then-semicolon that isn't 4 is ConEmu's
+            // business (sleep, message box, tab title…) and is left alone.
+            9 -> {
+                val sub = arg.substringBefore(';', "")
+                when {
+                    sub == "4" -> oscProgress(arg.substringAfter(';'))
+                    sub.isNotEmpty() && sub.all { it.isDigit() } -> {}
+                    arg.isNotBlank() -> onNotify?.invoke(null, arg)
+                }
+            }
+            777 -> {
+                val parts = arg.split(';', limit = 3)
+                if (parts.size >= 2 && parts[0] == "notify") {
+                    onNotify?.invoke(parts[1].ifBlank { null }, parts.getOrElse(2) { "" })
                 }
             }
             // OSC 7: the shell reports its working directory as a file:// URL. An
@@ -464,6 +500,47 @@ class TerminalEmulator(
             else -> {}
         }
         touch()
+    }
+
+    /**
+     * OSC 133 soundings, hung on the lines they land on. A opens a command at the
+     * prompt line; B notes where typing begins; C marks the output's first line; D
+     * closes it with the exit code. A D with no C (an empty Enter) finishes nothing
+     * worth a whisper; an A with a command still open (an unrigged subshell, a ^C
+     * the shell never closed) simply starts afresh.
+     */
+    private fun soundMark(kind: Char, extra: Int?) {
+        when (kind) {
+            // On the alternate screen (a shell inside tmux) lines are redrawn in
+            // place, never cleared, so a mark there would whisper beside the wrong
+            // text: the command is still followed, but nothing hangs on a line.
+            'A' -> {
+                val m = CommandMark(nextMarkId++)
+                if (!usingAlt) screen.line(cursorY).promptMark = m
+                currentCommand = m
+            }
+            'B' -> currentCommand?.inputCol = cursorX
+            'C' -> {
+                val m = currentCommand ?: CommandMark(nextMarkId++).also { currentCommand = it }
+                m.ran = true
+                if (!usingAlt) screen.line(cursorY).outputMark = m
+            }
+            'D' -> {
+                currentCommand?.let { m ->
+                    m.finished = true
+                    m.exitCode = extra
+                    lastFinished = m
+                }
+                currentCommand = null
+            }
+        }
+    }
+
+    /** `4;state;value`: the bar a long job paints in the taskbar, here steering the barge. */
+    private fun oscProgress(arg: String) {
+        val state = arg.substringBefore(';').toIntOrNull()?.takeIf { it in 0..4 } ?: return
+        val value = arg.substringAfter(';', "").takeWhile { it.isDigit() }.toIntOrNull()
+        onProgress?.invoke(state, value)
     }
 
     /** The Kitty graphics protocol arrives here: `ESC _ G … ESC \`. */

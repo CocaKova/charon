@@ -202,8 +202,14 @@ class SessionManager(
         // The horn: a rigged shell (OSC 133, docs/HORN.md) reports commands done;
         // long voyages that end while the app is away become a push.
         session.onCommandDone = { command, exit, durationMs ->
-            horn.sound(session.label, command, exit, durationMs)
+            horn.sound(
+                session.label, command, exit, durationMs,
+                sessionId = session.id,
+                markId = session.lastFinishedMarkId,
+                onAnotherTab = activeId.value != session.id,
+            )
         }
+        session.onCall = { title, body -> horn.call(session.label, title, body, session.id) }
         managed[session.id] = ms
         lastError.value = null
         sessions.update { it + session }

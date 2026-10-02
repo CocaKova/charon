@@ -215,6 +215,12 @@ private fun CharonRoot(
                     if (sessionManager.sessions.value.any { it.id == ask.sessionId }) {
                         filesFor = null
                         sessionManager.switchTo(ask.sessionId)
+                        // The horn lands on its command: the prompt it was typed at, at the
+                        // top of the glass. A mark that rolled out of history stays live.
+                        if (ask.markId >= 0) {
+                            sessionManager.sessions.value.firstOrNull { it.id == ask.sessionId }
+                                ?.landOnMark(ask.markId)
+                        }
                     }
                 }
             }

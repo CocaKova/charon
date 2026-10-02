@@ -314,17 +314,119 @@ class TerminalSession(
     /** Fired (from the reader thread) when a rigged shell reports a command done. */
     var onCommandDone: ((command: String, exitCode: Int?, durationMs: Long) -> Unit)? = null
 
+    /** The [CommandMark] id of the command last reported done; the horn lands on it. */
+    @Volatile var lastFinishedMarkId: Long = -1L
+        private set
+
+    /** When the running command's output began (C), on [clock]; null between commands. */
+    private var outputStartedAt: Long? = null
+
+    /**
+     * A program on the far side asked to be heard (OSC 9 / OSC 777): title (null
+     * for OSC 9) and body, as the program wrote them. Fired from the reader thread.
+     */
+    var onCall: ((title: String?, body: String) -> Unit)? = null
+
+    /** Something a tab in the background should show: a command done, a call. */
+    enum class SignalKind { DOCKED, AGROUND, CALL }
+    class Signal(val kind: SignalKind, val seq: Long)
+
+    private val _signal = MutableStateFlow<Signal?>(null)
+    private var signalSeq = 0L
+    /** The last thing worth a glance from another tab; the tab dot flashes on a new one. */
+    val signal: StateFlow<Signal?> = _signal
+
+    private fun raise(kind: SignalKind) {
+        _signal.value = Signal(kind, ++signalSeq)
+    }
+
+    private val _sounded = MutableStateFlow(false)
+    /** The shell has spoken OSC 133 at least once: prompt hops have somewhere to land. */
+    val sounded: StateFlow<Boolean> = _sounded
+
+    /** Selection-space rows (negative = scrollback) of every prompt still held, oldest first. */
+    fun promptRows(): List<Int> = synchronized(lock) {
+        val screen = term.screen
+        val out = ArrayList<Int>()
+        for (r in -screen.scrollbackSize until term.rows) {
+            if (screen.relativeLine(r).promptMark != null) out += r
+        }
+        out
+    }
+
+    /**
+     * Hop to the prompt above (older = true) or below the top of the glass, and put
+     * it at the top. False when there's no prompt that way (an unrigged shell has none).
+     */
+    fun jumpToPrompt(older: Boolean): Boolean {
+        val top = -scrollOffset.value
+        val rows = promptRows()
+        val target = if (older) rows.lastOrNull { it < top } else rows.firstOrNull { it > top }
+        if (target == null) {
+            if (!older) scrollToBottom()
+            return false
+        }
+        jumpToRow(target)
+        return true
+    }
+
+    /**
+     * Land on a command by its mark: its prompt line at the top of the glass (the
+     * command as typed, then its output), or the output's first line when the prompt
+     * already rolled away. False when the mark is gone from history altogether.
+     */
+    fun landOnMark(markId: Long): Boolean {
+        val row = synchronized(lock) {
+            val screen = term.screen
+            var found: Int? = null
+            for (r in -screen.scrollbackSize until term.rows) {
+                val line = screen.relativeLine(r)
+                if (line.promptMark?.id == markId) { found = r; break }
+                if (line.outputMark?.id == markId) { found = (r - 1).coerceAtLeast(-screen.scrollbackSize); break }
+            }
+            found
+        } ?: return false
+        selection.value = null
+        jumpToRow(row)
+        return true
+    }
+
     init {
         term.onClipboard = { clipboardOffer.value = it }
+        term.onNotify = { title, body ->
+            raise(SignalKind.CALL)
+            onCall?.invoke(title?.take(CALL_MAX), body.take(CALL_MAX))
+        }
+        // OSC 9;4: a program's own progress bar steers the barge — percent, error,
+        // indeterminate — and clearing it brings the barge home.
+        term.onProgress = { state, value ->
+            val now = clock()
+            cargoWatch.progress(state, value, now)
+            publishCargo(now)
+        }
         term.onCwd = {
             cwdReported = true
             _cwd.value = it
         }
         term.onShellMark = { kind, extra ->
             val now = clock()
+            if (!_sounded.value) _sounded.value = true
             when (kind) {
-                'C' -> voyage?.startedAt = now
+                'A' -> outputStartedAt = null
+                'C' -> {
+                    voyage?.startedAt = now
+                    outputStartedAt = now
+                }
                 'D' -> {
+                    // The whisper's length: output-start to done, on this session's clock.
+                    val finished = term.lastFinished
+                    val began = outputStartedAt ?: voyage?.let { it.startedAt ?: it.submittedAt }
+                    if (finished != null && began != null) finished.durationMs = (now - began) / 1_000_000
+                    outputStartedAt = null
+                    lastFinishedMarkId = finished?.id ?: -1L
+                    if (finished != null && finished.ran && finished.durationMs >= SIGNAL_MIN_MS) {
+                        raise(if (finished.failed) SignalKind.AGROUND else SignalKind.DOCKED)
+                    }
                     // The shell is back at a prompt: whatever was hauling cargo has
                     // finished, and its exit code says whether it docked or ran aground.
                     rigged = true
@@ -740,5 +842,11 @@ class TerminalSession(
 
         /** The closest two bells may ring. */
         const val BELL_GAP_NS = 400_000_000L
+
+        /** A command shorter than this finishing in another tab isn't worth a flash. */
+        const val SIGNAL_MIN_MS = 5_000L
+
+        /** A far-side call's title and body are cut to this before anyone sees them. */
+        const val CALL_MAX = 240
     }
 }

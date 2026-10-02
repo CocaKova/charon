@@ -486,6 +486,14 @@ class TerminalPaints(val regular: Typeface, val bold: Typeface, textSizePx: Floa
     }
     val fill = Paint()
 
+    /** The duration whisper beside a finished prompt: smaller, quieter than the text. */
+    val whisper = Paint().apply {
+        typeface = regular
+        textSize = textSizePx * 0.78f
+        isAntiAlias = true
+        isSubpixelText = true
+    }
+
     /** Bitmaps go down filtered — a scaled photo should not look like a mosaic. */
     val image = Paint().apply {
         isFilterBitmap = true
@@ -676,6 +684,11 @@ private fun drawTerminal(
                 }
             }
             col += cells
+        }
+        // A finished command's whisper at the row's far end ("✓ 2m14s", "✕ exit 2"),
+        // only where the prompt line leaves room for it — never over the text.
+        if (!term.usingAlt) line.promptMark?.whisper()?.let { words ->
+            drawWhisper(canvas, p, line, words, line.promptMark!!.failed, baseline, term.cols, cw, defaultFg, term.palette[1])
         }
     }
 
@@ -938,4 +951,30 @@ private fun cursorBox(
             out.set(left, top, left + t, top + height)
         }
     }
+}
+
+/** The whisper beside a prompt, right-aligned in the grid, skipped when the line is too full. */
+private fun drawWhisper(
+    canvas: android.graphics.Canvas,
+    p: TerminalPaints,
+    line: Line,
+    words: String,
+    failed: Boolean,
+    baseline: Float,
+    cols: Int,
+    cw: Float,
+    defaultFg: Int,
+    /** The livery's own red (ANSI 1), so aground reads right on paper and on night. */
+    red: Int,
+) {
+    var lastInk = cols - 1
+    while (lastInk >= 0 && (line.codePoints[lastInk] == Line.SPACE || line.codePoints[lastInk] == 0)) lastInk--
+    val width = p.whisper.measureText(words)
+    val right = cols * cw - cw * 0.25f
+    val left = right - width
+    if (left < (lastInk + 2) * cw) return
+    p.whisper.color = if (failed) opaque(red) else opaque(defaultFg)
+    p.whisper.alpha = if (failed) 200 else 110
+    canvas.drawText(words, left, baseline - (p.text.textSize - p.whisper.textSize) * 0.15f, p.whisper)
+    p.whisper.alpha = 255
 }

@@ -14,6 +14,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -134,6 +136,7 @@ fun TerminalScreen(
     val state by session.state.collectAsState()
     val selection by session.selection.collectAsState()
     val scrollOffset by session.scrollOffset.collectAsState()
+    val sounded by session.sounded.collectAsState()
     val toll by session.toll.collectAsState()
     val tollPulse by session.tollPulse.collectAsState()
     // Subscribe through collectAsState, but read the flow itself: collectAsState
@@ -607,6 +610,34 @@ fun TerminalScreen(
                                 .clickable { session.scrollToBottom() }
                                 .padding(horizontal = 18.dp, vertical = 7.dp),
                         )
+                        // Prompt hops (a rigged shell's OSC 133 A marks): the command above,
+                        // the command below, each landing at the top of the glass.
+                        if (sounded) {
+                            Text(
+                                "⇡",
+                                fontFamily = CharonMono,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.background,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Styx.water)
+                                    .clickable(onClickLabel = "previous prompt") { session.jumpToPrompt(older = true) }
+                                    .semantics { contentDescription = "jump to the previous prompt" }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                            )
+                            Text(
+                                "⇣",
+                                fontFamily = CharonMono,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.background,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Styx.water)
+                                    .clickable(onClickLabel = "next prompt") { session.jumpToPrompt(older = false) }
+                                    .semantics { contentDescription = "jump to the next prompt" }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                            )
+                        }
                         // Teal, like the rest of the dredge furniture.
                         Text(
                             "⌕",
@@ -934,15 +965,35 @@ private fun SessionTab(
     onClose: () -> Unit,
 ) {
     val state by session.state.collectAsState()
+    // A command done or a call in a tab you aren't on: its dot flashes gold (ashore,
+    // a call) or ember (aground), then keeps that hue until you step aboard.
+    val signal by session.signal.collectAsState()
+    var unseen by remember(session.id) { mutableStateOf<TerminalSession.SignalKind?>(null) }
+    val flash = remember(session.id) { Animatable(1f) }
+    val firstSignal = remember(session.id) { signal?.seq }
+    LaunchedEffect(signal?.seq) {
+        val sig = signal ?: return@LaunchedEffect
+        if (active || sig.seq == firstSignal) return@LaunchedEffect
+        unseen = sig.kind
+        repeat(3) {
+            flash.animateTo(0.2f, tween(160))
+            flash.animateTo(1f, tween(240))
+        }
+    }
+    LaunchedEffect(active) { if (active) unseen = null }
     // The remote's window title when it speaks one (tmux `set-titles on` keeps it at
     // the current window's name), else the mooring's user@host.
     val title by session.title.collectAsState()
     val dotColor by animateColorAsState(
-        targetValue = when (state) {
+        targetValue = when {
+            unseen == TerminalSession.SignalKind.AGROUND -> Styx.ember
+            unseen != null -> Styx.coin
+            else -> when (state) {
             is TerminalSession.State.Connected -> Styx.water
             is TerminalSession.State.Connecting -> Styx.coin
             is TerminalSession.State.Reconnecting -> Styx.coin
             is TerminalSession.State.Disconnected -> Styx.ember
+            }
         },
         animationSpec = tween(400),
         label = "tabDot",
@@ -980,7 +1031,7 @@ private fun SessionTab(
         Box(
             modifier = Modifier
                 .size(8.dp)
-                .graphicsLayer { alpha = dotAlpha }
+                .graphicsLayer { alpha = dotAlpha * flash.value }
                 .clip(CircleShape)
                 .background(dotColor),
         )

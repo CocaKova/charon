@@ -35,6 +35,12 @@ class Line(cols: Int) {
     var apparitions: MutableList<ApparitionPlacement>? = null
         private set
 
+    /** A rigged shell's prompt began on this line (OSC 133 A). */
+    var promptMark: CommandMark? = null
+
+    /** A command's output began on this line (OSC 133 C); the horn lands here. */
+    var outputMark: CommandMark? = null
+
     val cols: Int get() = codePoints.size
 
     init {
@@ -94,6 +100,8 @@ class Line(cols: Int) {
         // Clearing a line clears what was drawn over it, and a recycled line must
         // never inherit the last occupant's shades.
         apparitions = null
+        promptMark = null
+        outputMark = null
     }
 
     /** Anchor an apparition here; the newest of a given placement id wins. */
