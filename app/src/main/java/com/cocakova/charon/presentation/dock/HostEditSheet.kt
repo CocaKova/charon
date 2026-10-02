@@ -65,6 +65,8 @@ fun HostEditSheet(
     onDelete: (String) -> Unit,
     /** Moor without crossing — offered when mooring a crossing that came home. */
     onSaveOnly: ((HostDraft) -> Unit)? = null,
+    /** The rest of the fleet, for "cross by way of" (ProxyJump). */
+    moorings: List<com.cocakova.charon.data.db.HostEntity> = emptyList(),
 ) {
     val existing = (target as? EditTarget.Existing)?.host
     val seed = (target as? EditTarget.Prefilled)?.draft
@@ -82,6 +84,8 @@ fun HostEditSheet(
     var colorHex by rememberSaveable(target) { mutableStateOf(existing?.colorHex) }
     var startupCommand by rememberSaveable(target) { mutableStateOf(existing?.startupCommand ?: "") }
     var autoReconnect by rememberSaveable(target) { mutableStateOf(existing?.autoReconnect ?: true) }
+    var agentForwarding by rememberSaveable(target) { mutableStateOf(existing?.agentForwarding ?: false) }
+    var jumpHostId by rememberSaveable(target) { mutableStateOf(existing?.jumpHostId ?: seed?.jumpHostId) }
 
     val hasStoredPassword = existing?.passwordSealed != null
     val ready = host.isNotBlank() && username.isNotBlank() &&
@@ -99,6 +103,8 @@ fun HostEditSheet(
         colorHex = colorHex,
         startupCommand = startupCommand,
         autoReconnect = autoReconnect,
+        agentForwarding = agentForwarding && identityId != null,
+        jumpHostId = jumpHostId,
     )
 
     ModalBottomSheet(
@@ -254,6 +260,46 @@ fun HostEditSheet(
                     )
                 }
                 Switch(checked = autoReconnect, onCheckedChange = { autoReconnect = it })
+            }
+
+            // ProxyJump: cross to another mooring first and tunnel through it. Each
+            // shore along the way meets the ferryman on its own.
+            val jumpChoices = moorings.filter { it.id != existing?.id }
+            if (jumpChoices.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                ReadonlyDropdownField(
+                    value = jumpChoices.find { it.id == jumpHostId }?.displayName ?: "straight across",
+                    label = "cross by way of",
+                    choices = listOf(DropdownChoice("straight across", dim = true) { jumpHostId = null }) +
+                        jumpChoices.map { h -> DropdownChoice(h.displayName) { jumpHostId = h.id } },
+                )
+            }
+
+            // Agent forwarding: only meaningful with a key, and off unless asked for —
+            // the far shore can ask this key to sign while the crossing stands.
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "lend the key onward",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (identityId != null) MaterialTheme.colorScheme.onSurface else Styx.mist,
+                    )
+                    Text(
+                        if (identityId != null) {
+                            "agent forwarding — the far shore may ask this key to sign (to reach the next host, git push); each signature shows"
+                        } else {
+                            "needs a key of passage — agent forwarding lends a key, never a password"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Styx.mist,
+                    )
+                }
+                Switch(
+                    checked = agentForwarding && identityId != null,
+                    enabled = identityId != null,
+                    onCheckedChange = { agentForwarding = it },
+                )
             }
 
             Spacer(Modifier.height(20.dp))

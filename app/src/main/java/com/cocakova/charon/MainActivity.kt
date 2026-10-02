@@ -35,6 +35,7 @@ import com.cocakova.charon.data.repository.KeyVault
 import com.cocakova.charon.fleet.FleetWatch
 import com.cocakova.charon.fleet.SoundingTarget
 import com.cocakova.charon.presentation.dock.DockScreen
+import com.cocakova.charon.presentation.dock.ChallengeGate
 import com.cocakova.charon.presentation.dock.TrustGate
 import com.cocakova.charon.presentation.sftp.FilesScreen
 import com.cocakova.charon.presentation.terminal.TerminalScreen
@@ -149,6 +150,7 @@ private fun CharonRoot(
     val sessions by sessionManager.sessions.collectAsState()
     val error by sessionManager.lastError.collectAsState()
     val pendingTrust by sessionManager.pendingTrust.collectAsState()
+    val pendingChallenge by sessionManager.pendingChallenge.collectAsState()
     val mooringOffer by sessionManager.mooringOffer.collectAsState()
     val hosts by hostVault.hosts.collectAsState(initial = emptyList())
     val identities by keyVault.identities.collectAsState(initial = emptyList())
@@ -296,12 +298,12 @@ private fun CharonRoot(
                     sessions.firstOrNull { sessionManager.hostIdFor(it.id) == host.id }?.id
                 },
                 onOpenHold = { sessionId -> filesFor = sessionId },
-                onFetchTailnet = { host ->
+                onErrand = { host, command ->
                     // Prefer the host's own live transport — no second handshake, no
                     // re-trust/biometric prompt, no TOFU gate hiding under the sheet.
-                    sessionManager.execOnHost(host.id, "tailscale status --json")
+                    sessionManager.execOnHost(host.id, command)
                         ?: hostVault.connectConfig(host)
-                            ?.let { sessionManager.execOnce(it, "tailscale status --json") }
+                            ?.let { sessionManager.execOnce(it, command) }
                         ?: Result.failure(IllegalStateException("the crossing was not unlocked"))
                 },
                 historyCount = historyEntries.size,
@@ -314,6 +316,7 @@ private fun CharonRoot(
     }
 
     pendingTrust?.let { TrustGate(it) }
+    pendingChallenge?.let { ChallengeGate(it) }
     BiometricGate(keyVault)
 }
 

@@ -16,6 +16,7 @@ interface SshEngine {
         config: ConnectConfig,
         session: TerminalSession,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter? = null,
     ): SshConnection
 
     /** Install one public key through a short-lived, verified SSH connection. */
@@ -23,6 +24,7 @@ interface SshEngine {
         config: ConnectConfig,
         publicLine: String,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter? = null,
     )
 
     /**
@@ -35,6 +37,7 @@ interface SshEngine {
         config: ConnectConfig,
         command: String,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter? = null,
     ): String
 }
 
@@ -112,4 +115,14 @@ data class ConnectConfig(
     val startupCommand: String = "",
     /** Redial on transport death (backoff + network-callback). The default for a homelab. */
     val autoReconnect: Boolean = true,
-)
+    /** Cross by way of another shore first (ProxyJump): its own config, auth and TOFU. */
+    val jump: ConnectConfig? = null,
+    /** Lend this crossing's key onward (agent forwarding) — signatures only, each one shown. */
+    val agentForwarding: Boolean = false,
+) {
+    // A config carries secrets: never let one leak into a log line or a crash report.
+    override fun toString(): String =
+        "ConnectConfig($username@$host:$port, key=${privateKeyPem != null}, " +
+            "password=${password != null}, jump=${jump?.let { "${it.username}@${it.host}" }}, " +
+            "agent=$agentForwarding)"
+}

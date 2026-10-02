@@ -14,6 +14,9 @@ biometric = "1.1.0"
 bouncycastle = "1.80"
 coroutines = "1.10.2"
 junit = "4.13.2"
+# JVM-only test harnesses: SQLite for the Room migration walk, an in-process sshd for the auth paths
+sqlite-jdbc = "3.41.2.2"
+mina-sshd = "2.15.0"
 kotlin = "2.0.0"
 ksp = "2.0.0-1.0.21"
 # 2.6.x cannot read Kotlin 2.0 metadata under KSP ("unexpected jvm signature V");
@@ -41,6 +44,8 @@ androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-ru
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidxLifecycle" }
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 junit = { module = "junit:junit", version.ref = "junit" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+mina-sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "mina-sshd" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }

@@ -36,6 +36,10 @@ data class HostEntity(
     val startupCommand: String = "",
     /** Redial on transport death (backoff + instant network-callback redial). */
     val autoReconnect: Boolean = true,
+    /** Lend this mooring's key onward (SSH agent forwarding). Off unless asked for. */
+    val agentForwarding: Boolean = false,
+    /** Cross by way of another mooring first (ProxyJump); null = straight across. */
+    val jumpHostId: String? = null,
     val lastConnectedAt: Long,
     val createdAt: Long,
     val lastModified: Long,
@@ -208,7 +212,7 @@ interface PortForwardDao {
         HostEntity::class, KnownHostEntity::class, IdentityEntity::class,
         SnippetEntity::class, PortForwardEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class CharonDb : RoomDatabase() {
@@ -272,9 +276,21 @@ abstract class CharonDb : RoomDatabase() {
             }
         }
 
+        // v1.1 → v1.2: the key lent onward (agent forwarding) + crossing via (ProxyJump).
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hosts ADD COLUMN agentForwarding INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hosts ADD COLUMN jumpHostId TEXT")
+            }
+        }
+
+        /** Every step from v1 to now, in order — the app and the migration tests read the same list. */
+        internal val MIGRATIONS: Array<Migration>
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+
         fun build(context: Context): CharonDb =
             Room.databaseBuilder(context, CharonDb::class.java, "charon.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(*MIGRATIONS)
                 .build()
     }
 }

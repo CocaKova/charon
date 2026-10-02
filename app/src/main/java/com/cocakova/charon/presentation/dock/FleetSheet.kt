@@ -48,19 +48,22 @@ import com.cocakova.charon.data.db.IdentityEntity
 import com.cocakova.charon.data.repository.HostDraft
 import com.cocakova.charon.fleet.FleetCandidate
 import com.cocakova.charon.fleet.LanSweep
+import com.cocakova.charon.fleet.SshConfigImport
 import com.cocakova.charon.fleet.TailscaleImport
 import com.cocakova.charon.presentation.components.ChoicePill
 import com.cocakova.charon.presentation.components.DropdownChoice
 import com.cocakova.charon.presentation.components.ReadonlyDropdownField
 import com.cocakova.charon.theme.Styx
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /**
- * Charting the waters: the fleet import sheet. Two ways to find ships — ask a
+ * Charting the waters: the fleet import sheet. Three ways to find ships — ask a
  * mooring already on the tailnet for `tailscale status --json` (or paste one),
- * or sweep the phone's own /24 for anything answering on :22. Either way the
- * sightings land in one picker: choose, give them a shared username and an
- * optional harbor, and moor the lot.
+ * sweep the phone's own /24 for anything answering on :22, or read an OpenSSH
+ * `~/.ssh/config` (asked of a mooring, or pasted). Every way the sightings land in
+ * one picker: choose, give them a shared username and an optional harbor, and moor
+ * the lot. A config's own User, Port, ProxyJump and ForwardAgent ride along.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,11 +71,18 @@ fun FleetSheet(
     hosts: List<HostEntity>,
     identities: List<IdentityEntity>,
     onDismiss: () -> Unit,
-    onFetchTailnet: suspend (HostEntity) -> Result<String>,
+    /** Run one errand on a mooring (its live crossing if one is up) and bring back stdout. */
+    onErrand: suspend (HostEntity, String) -> Result<String>,
     onAddMoorings: (List<HostDraft>) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    var tailnetMode by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf(ChartMode.Tailnet) }
+    val tailnetMode = mode == ChartMode.Tailnet
+    val configMode = mode == ChartMode.Config
+    // ssh_config entries by alias (two aliases may share an address), and what the
+    // reader couldn't carry across.
+    var configEntries by remember { mutableStateOf(mapOf<String, SshConfigImport.Entry>()) }
+    var configNotes by remember { mutableStateOf(listOf<String>()) }
 
     // The sightings, however they arrived, and which of them are chosen.
     val sightings = remember { mutableStateListOf<FleetCandidate>() }
@@ -85,10 +95,18 @@ fun FleetSheet(
     var busy by remember { mutableStateOf(false) }
     val existingHosts = remember(hosts) { hosts.mapTo(HashSet()) { it.host } }
 
+    // A config sighting is chosen by its alias; every other kind by its address.
+    fun keyOf(ship: FleetCandidate) = if (configMode) ship.name else ship.host
+
     fun land(candidates: List<FleetCandidate>) {
         sightings.clear(); sightings.addAll(candidates)
-        chosen = candidates.filterNot { it.host in existingHosts }.mapTo(LinkedHashSet()) { it.host }
+        chosen = candidates.filterNot { it.host in existingHosts }.mapTo(LinkedHashSet()) { keyOf(it) }
         error = null
+    }
+
+    fun switchTo(next: ChartMode) {
+        mode = next; sightings.clear(); chosen = emptySet(); error = null; busy = false
+        configEntries = emptyMap(); configNotes = emptyList()
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -108,22 +126,33 @@ fun FleetSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Clearing busy on a mode switch keeps a cancelled finder's coroutine
                 // (its scope dies with the tab) from latching the ask/moor buttons off.
-                ChoicePill("the tailnet", tailnetMode) {
-                    tailnetMode = true; sightings.clear(); chosen = emptySet(); error = null; busy = false
-                }
-                ChoicePill("near waters", !tailnetMode) {
-                    tailnetMode = false; sightings.clear(); chosen = emptySet(); error = null; busy = false
-                }
+                ChoicePill("the tailnet", tailnetMode) { switchTo(ChartMode.Tailnet) }
+                ChoicePill("near waters", mode == ChartMode.Near) { switchTo(ChartMode.Near) }
+                ChoicePill("ssh config", configMode) { switchTo(ChartMode.Config) }
             }
             Spacer(Modifier.height(14.dp))
 
-            if (tailnetMode) {
+            if (configMode) {
+                SshConfigFinder(
+                    hosts = hosts,
+                    busy = busy,
+                    onBusy = { busy = it },
+                    onError = { error = it },
+                    onFetch = { h -> onErrand(h, "cat ~/.ssh/config") },
+                    onRead = { result ->
+                        configEntries = result.entries.associateBy { it.alias }
+                        configNotes = result.notes
+                        land(result.entries.map { it.asSighting() })
+                        if (result.entries.isEmpty()) error = "no Host lines to moor in that config"
+                    },
+                )
+            } else if (tailnetMode) {
                 TailnetFinder(
                     hosts = hosts,
                     busy = busy,
                     onBusy = { busy = it },
                     onError = { error = it },
-                    onFetch = onFetchTailnet,
+                    onFetch = { h -> onErrand(h, "tailscale status --json") },
                     onSightings = { candidates, sourceUser ->
                         land(candidates)
                         if (username.isBlank()) username = sourceUser
@@ -154,15 +183,21 @@ fun FleetSheet(
                 Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
                     sightings.forEach { ship ->
                         val moored = ship.host in existingHosts
+                        val key = keyOf(ship)
                         SightingRow(
                             ship = ship,
                             moored = moored,
-                            chosen = ship.host in chosen,
+                            chosen = key in chosen,
                             onToggle = {
-                                chosen = if (ship.host in chosen) chosen - ship.host
-                                else chosen + ship.host
+                                chosen = if (key in chosen) chosen - key else chosen + key
                             },
                         )
+                    }
+                }
+                if (configMode && configNotes.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    configNotes.forEach {
+                        Text("· $it", style = MaterialTheme.typography.bodySmall, color = Styx.mist)
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -174,7 +209,7 @@ fun FleetSheet(
                         value = username,
                         onValueChange = { username = it },
                         singleLine = true,
-                        label = { Text("username") },
+                        label = { Text(if (configMode) "username (when the config names none)" else "username") },
                         modifier = Modifier.weight(1f),
                     )
                     OutlinedTextField(
@@ -218,10 +253,33 @@ fun FleetSheet(
                 )
                 Spacer(Modifier.height(12.dp))
                 val count = chosen.size
+                val chosenEntries = if (configMode) chosen.mapNotNull { configEntries[it] } else emptyList()
+                val namesEveryone = username.isNotBlank() || (configMode && chosenEntries.all { it.user != null })
                 Button(
                     onClick = {
                         val bindPort = port.toIntOrNull()?.takeIf { it in 1..65535 } ?: 22
-                        val drafts = sightings.filter { it.host in chosen }.map { ship ->
+                        val drafts = if (configMode) {
+                            SshConfigImport.plan(
+                                chosen = chosenEntries,
+                                moored = hosts.map { SshConfigImport.Moored(it.id, it.name, it.host, it.port, it.username) },
+                                sharedUser = username.trim(),
+                                sharedPort = bindPort,
+                                newId = { UUID.randomUUID().toString() },
+                            ).moorings.map { m ->
+                                HostDraft(
+                                    id = m.id,
+                                    name = m.alias,
+                                    host = m.host,
+                                    port = m.port,
+                                    username = m.username,
+                                    password = "",
+                                    identityId = identityId,
+                                    harbor = harbor.trim(),
+                                    agentForwarding = m.forwardAgent,
+                                    jumpHostId = m.jumpHostId,
+                                )
+                            }
+                        } else sightings.filter { it.host in chosen }.map { ship ->
                             HostDraft(
                                 id = null,
                                 name = ship.name,
@@ -237,7 +295,7 @@ fun FleetSheet(
                         onAddMoorings(drafts)
                         onDismiss()
                     },
-                    enabled = count > 0 && username.isNotBlank() && !busy,
+                    enabled = count > 0 && namesEveryone && !busy,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Styx.water,
                         contentColor = Styx.night,
@@ -250,6 +308,84 @@ fun FleetSheet(
             Spacer(Modifier.height(20.dp))
         }
     }
+}
+
+private enum class ChartMode { Tailnet, Near, Config }
+
+/** A config entry as the picker shows it: alias, address, and what rides along. */
+private fun SshConfigImport.Entry.asSighting() = FleetCandidate(
+    name = alias,
+    host = hostName,
+    online = false, // a config says nothing about who is afloat
+    os = buildList {
+        user?.let { add("$it@") }
+        port?.takeIf { it != 22 }?.let { add(":$it") }
+        proxyJump?.let { add("via $it") }
+        if (forwardAgent) add("lends the key")
+    }.joinToString(" "),
+)
+
+/** The config leg: ask a mooring for its ~/.ssh/config, or paste one. */
+@Composable
+private fun SshConfigFinder(
+    hosts: List<HostEntity>,
+    busy: Boolean,
+    onBusy: (Boolean) -> Unit,
+    onError: (String?) -> Unit,
+    onFetch: suspend (HostEntity) -> Result<String>,
+    onRead: (SshConfigImport.Result) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var source by remember { mutableStateOf(hosts.firstOrNull()) }
+    var pasted by remember { mutableStateOf("") }
+
+    Text(
+        "read an OpenSSH config — each Host keeps its own user, port, jump and ForwardAgent",
+        style = MaterialTheme.typography.bodySmall,
+        color = Styx.mist,
+    )
+    Spacer(Modifier.height(8.dp))
+    if (hosts.isNotEmpty()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ReadonlyDropdownField(
+                value = source?.displayName ?: "",
+                label = "whose ~/.ssh/config",
+                choices = hosts.map { h -> DropdownChoice(h.displayName) { source = h } },
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(10.dp))
+            TextButton(
+                onClick = {
+                    val src = source ?: return@TextButton
+                    scope.launch {
+                        onBusy(true); onError(null)
+                        onFetch(src)
+                            .mapCatching { SshConfigImport.parse(it) }
+                            .onSuccess(onRead)
+                            .onFailure { onError(it.message ?: "the errand failed") }
+                        onBusy(false)
+                    }
+                },
+                enabled = !busy && source != null,
+            ) {
+                Text(if (busy) "asking…" else "ask", color = Styx.water)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+    }
+    OutlinedTextField(
+        value = pasted,
+        onValueChange = { pasted = it },
+        label = { Text("or paste a config") },
+        minLines = 3,
+        maxLines = 8,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(6.dp))
+    TextButton(
+        onClick = { onError(null); onRead(SshConfigImport.parse(pasted)) },
+        enabled = pasted.isNotBlank() && !busy,
+    ) { Text("read it", color = Styx.water) }
 }
 
 /** The tailnet leg: pick a mooring to ask, or paste a status by hand. */

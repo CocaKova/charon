@@ -160,4 +160,6 @@ dependencies {
   // Local tests
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.sqlite.jdbc)
+  testImplementation(libs.mina.sshd.core)
 }

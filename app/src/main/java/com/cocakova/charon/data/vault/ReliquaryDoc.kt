@@ -35,6 +35,8 @@ data class RHost(
     val colorHex: String? = null,
     val startupCommand: String = "",
     val autoReconnect: Boolean = true,
+    val agentForwarding: Boolean = false,
+    val jumpHostId: String? = null,
     val lastConnectedAt: Long = 0,
     val createdAt: Long = 0,
     val lastModified: Long = 0,

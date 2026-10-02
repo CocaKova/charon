@@ -5,13 +5,31 @@ import com.cocakova.charon.service.AppVisibility
 import net.schmizz.keepalive.KeepAliveProvider
 import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.Buffer
+import net.schmizz.sshj.common.Factory
 import net.schmizz.sshj.common.Message
 import net.schmizz.sshj.common.SSHPacket
+import net.schmizz.sshj.connection.Connection
+import net.schmizz.sshj.connection.channel.Channel
 import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Parameters
+import net.schmizz.sshj.connection.channel.direct.Session
+import net.schmizz.sshj.connection.channel.direct.SessionChannel
+import net.schmizz.sshj.connection.channel.forwarded.AbstractForwardedChannel
+import net.schmizz.sshj.connection.channel.forwarded.AbstractForwardedChannelOpener
+import net.schmizz.sshj.connection.channel.forwarded.ConnectListener
 import net.schmizz.sshj.connection.channel.forwarded.RemotePortForwarder
 import net.schmizz.sshj.connection.channel.forwarded.SocketForwardingConnectListener
+import net.schmizz.sshj.userauth.keyprovider.KeyProvider
+import net.schmizz.sshj.userauth.method.AuthKeyboardInteractive
+import net.schmizz.sshj.userauth.method.AuthMethod
+import net.schmizz.sshj.userauth.method.AuthPassword
+import net.schmizz.sshj.userauth.method.AuthPublickey
+import net.schmizz.sshj.userauth.method.ChallengeResponseProvider
 import net.schmizz.sshj.userauth.password.PasswordUtils
+import net.schmizz.sshj.userauth.password.Resource
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.util.concurrent.LinkedBlockingQueue
@@ -33,6 +51,7 @@ class SshjEngine : SshEngine {
         config: ConnectConfig,
         publicLine: String,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter?,
     ) {
         val line = shellQuote(publicLine.trim())
         val file = "\"\$HOME/.ssh/authorized_keys\""
@@ -42,6 +61,7 @@ class SshjEngine : SshEngine {
                 "chmod 700 \"\$HOME/.ssh\" && chmod 600 $file && " +
                 "{ grep -qxF $line $file || printf '%s\\n' $line >> $file; }",
             verifier,
+            prompter,
             "the remote host refused the key",
         )
     }
@@ -50,7 +70,8 @@ class SshjEngine : SshEngine {
         config: ConnectConfig,
         command: String,
         verifier: KnownHostsVerifier,
-    ): String = oneShotExec(config, command, verifier, "the mooring refused the errand")
+        prompter: AuthPrompter?,
+    ): String = oneShotExec(config, command, verifier, prompter, "the mooring refused the errand")
 
     /**
      * Connect, authenticate, run one command over a short-lived verified
@@ -67,15 +88,17 @@ class SshjEngine : SshEngine {
         config: ConnectConfig,
         command: String,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter?,
         refusalMessage: String,
     ): String {
+        val jump = config.jump?.let { openJump(it, verifier, prompter) }
         val client = client(verifier)
         try {
-            client.connect(config.host, config.port)
+            dial(client, config, jump)
             // TOFU is resolved inside connect(); now bound every subsequent read so
             // the errand can't hang the caller.
             client.timeout = ONE_SHOT_TIMEOUT_S * 1000
-            authenticate(client, config)
+            authenticate(client, config, prompter)
             val sshSession = client.startSession()
             try {
                 val cmd = sshSession.exec(command)
@@ -93,6 +116,7 @@ class SshjEngine : SshEngine {
             }
         } finally {
             runCatching { client.close() }
+            runCatching { jump?.close() }
         }
     }
 
@@ -100,20 +124,30 @@ class SshjEngine : SshEngine {
         config: ConnectConfig,
         session: TerminalSession,
         verifier: KnownHostsVerifier,
+        prompter: AuthPrompter?,
     ): SshConnection {
+        // ProxyJump: stand up the crossing to the jump shore first (its own TOFU, its
+        // own auth), then tunnel the real handshake through a direct-tcpip channel.
+        val jump = config.jump?.let { openJump(it, verifier, prompter) }
         val client = client(verifier)
 
         try {
-            client.connect(config.host, config.port)
+            dial(client, config, jump)
             // The heartbeat starts at whichever rate matches where the app is right
             // now — a redial fired by the network callback can land with the phone
             // still pocketed, and must not wake the radio every 30s all night.
             client.connection.keepAlive.keepAliveInterval =
                 if (AppVisibility.visible) SshConnection.KEEPALIVE_FOREGROUND_S
                 else SshConnection.KEEPALIVE_BACKGROUND_S
-            authenticate(client, config)
+            val keyProvider = authenticate(client, config, prompter)
 
-            val sshSession = client.startSession()
+            // The key lent onward: a forwarded agent channel the far shore may open to
+            // ask for signatures with this crossing's key — and nothing more.
+            val sshSession: Session = if (config.agentForwarding && keyProvider != null) {
+                lendKey(client, keyProvider, session)
+            } else {
+                client.startSession()
+            }
             // Pixel dimensions travel with the window size. Image tools ask the PTY
             // how big a cell is before they ask the terminal; a PTY reporting 0x0
             // sends `kitten icat` down its no-graphics path before we ever see it.
@@ -193,6 +227,7 @@ class SshjEngine : SshEngine {
                     session.state.value = TerminalSession.State.Disconnected(reason, clean)
                     runCatching { sshSession.close() }
                     runCatching { client.disconnect() }
+                    runCatching { jump?.close() }
                 }
             }
 
@@ -202,6 +237,7 @@ class SshjEngine : SshEngine {
                 override fun disconnect() {
                     runCatching { sshSession.close() }
                     runCatching { client.close() }
+                    runCatching { jump?.close() }
                 }
 
                 override fun exec(command: String, timeoutSeconds: Int): String? = runCatching {
@@ -317,8 +353,69 @@ class SshjEngine : SshEngine {
             }
         } catch (e: Exception) {
             runCatching { client.close() }
+            runCatching { jump?.close() }
             throw e
         }
+    }
+
+    /** The jump shore, connected and authenticated; the caller closes it. */
+    private fun openJump(jump: ConnectConfig, verifier: KnownHostsVerifier, prompter: AuthPrompter?): SSHClient {
+        val via = jump.jump?.let { openJump(it, verifier, prompter) }
+        val c = client(verifier)
+        try {
+            dial(c, jump, via)
+            c.connection.keepAlive.keepAliveInterval =
+                if (AppVisibility.visible) SshConnection.KEEPALIVE_FOREGROUND_S
+                else SshConnection.KEEPALIVE_BACKGROUND_S
+            authenticate(c, jump, prompter)
+            return c
+        } catch (e: Exception) {
+            runCatching { c.close() }
+            runCatching { via?.close() }
+            throw e
+        }
+    }
+
+    /** Straight across, or through the jump shore's direct-tcpip channel. */
+    private fun dial(client: SSHClient, config: ConnectConfig, via: SSHClient?) {
+        if (via == null) {
+            client.connect(config.host, config.port)
+        } else {
+            client.connectVia(via.newDirectConnection(config.host, config.port))
+        }
+    }
+
+    /**
+     * Open the shell's session channel asking for agent forwarding, and answer the
+     * agent channels the far shore opens back. Only this crossing's own key is held;
+     * every signature it makes is told to the session (the "signed onward" pill).
+     */
+    private fun lendKey(client: SSHClient, keys: KeyProvider, session: TerminalSession): Session {
+        val pub = keys.getPublic()
+        val keyType = keys.getType().toString()
+        val agent = SshAgent(
+            listOf(
+                SshAgent.Key(
+                    blob = Buffer.PlainBuffer().putPublicKey(pub).compactData,
+                    comment = "charon",
+                ) { data, flags ->
+                    val name = SshAgent.signatureName(keyType, flags)
+                    val algorithm = Factory.Named.Util.create(client.transport.config.keyAlgorithms, name)
+                        ?: throw IllegalStateException("no signer for $name")
+                    val signer = algorithm.newSignature()
+                    signer.initSign(keys.getPrivate())
+                    signer.update(data)
+                    algorithm.keyAlgorithm to signer.encode(signer.sign())
+                },
+            ),
+            onSign = { session.noteKeyLent() },
+        )
+        client.connection.attach(AgentOpener(client.connection, agent))
+        val chan = AgentSession(client.connection)
+        chan.open()
+        // A server that refuses forwarding still gives us a shell — just no lent key.
+        runCatching { chan.requestAgent() }.onFailure { Log.i(TAG, "agent forwarding refused") }
+        return chan
     }
 
     private fun client(verifier: KnownHostsVerifier): SSHClient {
@@ -334,33 +431,118 @@ class SshjEngine : SshEngine {
         }
     }
 
-    private fun authenticate(client: SSHClient, config: ConnectConfig) {
+    /**
+     * Key first, then password, then keyboard-interactive — the server's own
+     * questions (PAM, a one-time code), where a stored password answers the first
+     * password prompt and the traveller answers the rest. Returns the key that was
+     * offered, for agent forwarding.
+     */
+    private fun authenticate(client: SSHClient, config: ConnectConfig, prompter: AuthPrompter?): KeyProvider? {
+        val methods = ArrayList<AuthMethod>(3)
+        var keys: KeyProvider? = null
         var keyFailure: Exception? = null
         if (config.privateKeyPem != null) {
             try {
                 val finder = config.keyPassphrase
                     ?.let { PasswordUtils.createOneOff(it.toCharArray()) }
-                client.authPublickey(
-                    config.username,
-                    client.loadKeys(config.privateKeyPem, null, finder),
-                )
-                return
+                keys = client.loadKeys(config.privateKeyPem, null, finder)
+                methods += AuthPublickey(keys)
             } catch (e: Exception) {
                 keyFailure = e
             }
         }
         if (config.password != null) {
-            client.authPassword(config.username, config.password)
-            return
+            methods += AuthPassword(PasswordUtils.createOneOff(config.password.toCharArray()))
         }
-        if (keyFailure != null) throw keyFailure
-        error("no authentication method provided")
+        val responder = ChallengeResponder(config.password, prompter?.let { p -> { c: Challenge -> p.answer(c) } })
+        methods += AuthKeyboardInteractive(InteractiveAnswers(config.host, responder))
+        if (keys == null && config.password == null && prompter == null) {
+            if (keyFailure != null) throw keyFailure
+            error("no authentication method provided")
+        }
+        try {
+            client.auth(config.username, methods)
+        } catch (e: Exception) {
+            if (keyFailure != null && config.password == null) throw keyFailure
+            throw e
+        }
+        return keys
     }
+
+    /** sshj's side of keyboard-interactive, answered by a [ChallengeResponder]. */
+    private class InteractiveAnswers(
+        private val host: String,
+        private val responder: ChallengeResponder,
+    ) : ChallengeResponseProvider {
+        private var name = ""
+        private var instruction = ""
+
+        override fun getSubmethods(): List<String> = emptyList()
+
+        override fun init(resource: Resource<*>?, name: String?, instruction: String?) {
+            this.name = name.orEmpty()
+            this.instruction = instruction.orEmpty()
+        }
+
+        override fun getResponse(prompt: String, echo: Boolean): CharArray =
+            responder.respond(Challenge(host, name, instruction, prompt, echo)).toCharArray()
+
+        override fun shouldRetry(): Boolean = false
+    }
+
+    /** The shell's session channel, able to ask for agent forwarding before the PTY. */
+    private class AgentSession(conn: Connection) : SessionChannel(conn) {
+        fun requestAgent() {
+            sendChannelRequest("auth-agent-req@openssh.com", true, Buffer.PlainBuffer())
+                .await(conn.timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        }
+    }
+
+    /** Accepts the far shore's `auth-agent@openssh.com` channels and serves [agent] on each. */
+    private class AgentOpener(conn: Connection, private val agent: SshAgent) :
+        AbstractForwardedChannelOpener(AGENT_CHANNEL, conn) {
+        override fun handleOpen(buf: SSHPacket) {
+            val chan = AgentChannel(conn, buf.readUInt32AsInt(), buf.readUInt32(), buf.readUInt32())
+            callListener(
+                ConnectListener { forwarded -> serve(forwarded, agent) },
+                chan,
+            )
+        }
+
+        private fun serve(chan: Channel.Forwarded, agent: SshAgent) {
+            try {
+                // The far shore waits on our confirmation before it says a word.
+                chan.confirm()
+                val input = DataInputStream(chan.inputStream)
+                val output = DataOutputStream(chan.outputStream)
+                while (true) {
+                    val length = input.readInt()
+                    if (length <= 0 || length > MAX_AGENT_MESSAGE) break
+                    val request = ByteArray(length)
+                    input.readFully(request)
+                    val reply = agent.handle(request)
+                    output.writeInt(reply.size)
+                    output.write(reply)
+                    output.flush()
+                }
+            } catch (_: Exception) {
+                // The far side hung up the agent channel: that's how it ends.
+            } finally {
+                runCatching { chan.close() }
+            }
+        }
+    }
+
+    private class AgentChannel(conn: Connection, recipient: Int, window: Long, maxPacket: Long) :
+        AbstractForwardedChannel(conn, AGENT_CHANNEL, recipient, window, maxPacket, "", 0)
 
     companion object {
         /** Read bound for a one-shot errand — long enough for a slow tailnet RTT,
          *  short enough that a wedged command doesn't strand the caller. */
         private const val ONE_SHOT_TIMEOUT_S = 25
+
+        private const val AGENT_CHANNEL = "auth-agent@openssh.com"
+        private const val MAX_AGENT_MESSAGE = 256 * 1024
 
         /** Output cap for a silent probe (`compgen -c` on a busy host runs ~60 KB;
          *  anything past this is a runaway command, not an inventory). */

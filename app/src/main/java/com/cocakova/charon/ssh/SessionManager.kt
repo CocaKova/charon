@@ -96,6 +96,20 @@ class SessionManager(
         mooringOffer.value = null
     }
 
+    /** Set while the far shore asks its own question (keyboard-interactive). */
+    val pendingChallenge = MutableStateFlow<PendingChallenge?>(null)
+
+    /** Parks the connect thread on the traveller's answer, like the trust gate. */
+    private val prompter = AuthPrompter { challenge ->
+        val pending = PendingChallenge(challenge)
+        pendingChallenge.value = pending
+        try {
+            runBlocking { pending.reply.await() }
+        } finally {
+            pendingChallenge.value = null
+        }
+    }
+
     private val verifier = KnownHostsVerifier(knownHostDao) { request ->
         // Called on a connect thread: park it until the user decides.
         val pending = PendingTrust(request)
@@ -255,7 +269,7 @@ class SessionManager(
         if (firstAttempt) ms.session.state.value = TerminalSession.State.Connecting
         scope.launch {
             try {
-                ms.connection = engine.connectShell(ms.config, ms.session, verifier)
+                ms.connection = engine.connectShell(ms.config, ms.session, verifier, prompter)
                 ms.hostId?.let { hostDao.touchConnected(it, System.currentTimeMillis()) }
                 // Auto-start charted channels here, not in the watcher — the state
                 // flips Connected inside connectShell, before ms.connection is set.
@@ -378,7 +392,7 @@ class SessionManager(
     /** Carry a public key to a host using its current password authentication. */
     suspend fun grantPassage(config: ConnectConfig, publicLine: String) {
         withContext(Dispatchers.IO) {
-            engine.installPublicKey(config, publicLine, verifier)
+            engine.installPublicKey(config, publicLine, verifier, prompter)
         }
     }
 
@@ -388,7 +402,7 @@ class SessionManager(
      */
     suspend fun execOnce(config: ConnectConfig, command: String): Result<String> =
         withContext(Dispatchers.IO) {
-            runCatching { engine.execOnce(config, command, verifier) }
+            runCatching { engine.execOnce(config, command, verifier, prompter) }
         }
 
     /** The live session moored to a saved host, if one is underway. */

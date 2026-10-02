@@ -284,6 +284,20 @@ fun TerminalScreen(
         if (bellOn) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
     }
 
+    // The key lent onward (agent forwarding): every signature it makes shows, for a
+    // beat, as a gold pill — a lent key is never at work unseen.
+    val keyTick by session.keyLent.collectAsState()
+    val keyNow = session.keyLent.value.also { keyTick }
+    var keySeen by remember(session.id) { mutableStateOf(keyNow) }
+    var keyShown by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(session.id, keyNow) {
+        if (keyNow == keySeen) return@LaunchedEffect
+        keySeen = keyNow
+        keyShown = true
+        delay(2200)
+        keyShown = false
+    }
+
     // OSC 52: a yank from the far shore, behind consent per user@host.
     val clipTick by session.clipboardOffer.collectAsState()
     val clipOffer = session.clipboardOffer.value.also { clipTick }
@@ -521,6 +535,19 @@ fun TerminalScreen(
                     Spacer(Modifier.height(8.dp))
                 }
                 tollShown?.let { TollPill(phase = it, pulse = tollPulse) }
+                AnimatedVisibility(visible = keyShown) {
+                    Text(
+                        "⚿ your key signed onward",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Styx.coin,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, Styx.coin.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
             }
 
             // The dredge bar: search the wake. Sits under the switcher, over the

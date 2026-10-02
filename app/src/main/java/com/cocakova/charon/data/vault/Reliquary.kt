@@ -87,23 +87,7 @@ class Reliquary(
             exportedAt = isoNow(),
             appVersion = appVersion,
             hosts = hosts.map { h ->
-                RHost(
-                    id = h.id,
-                    name = h.name,
-                    host = h.host,
-                    port = h.port,
-                    username = h.username,
-                    password = h.passwordSealed
-                        ?.let { String(SecretVault.open(it), Charsets.UTF_8) },
-                    identityId = h.identityId,
-                    harbor = h.harbor,
-                    colorHex = h.colorHex,
-                    startupCommand = h.startupCommand,
-                    autoReconnect = h.autoReconnect,
-                    lastConnectedAt = h.lastConnectedAt,
-                    createdAt = h.createdAt,
-                    lastModified = h.lastModified,
-                )
+                h.toRHost(password = h.passwordSealed?.let { String(SecretVault.open(it), Charsets.UTF_8) })
             },
             identities = rIdentities,
             knownHosts = known.map { k ->
@@ -225,25 +209,10 @@ class Reliquary(
         for (r in preview.hosts.land) {
             val existing = db.hosts().byId(r.id)
             db.hosts().upsert(
-                HostEntity(
-                    id = r.id,
-                    name = r.name,
-                    host = r.host,
-                    port = r.port,
-                    username = r.username,
-                    passwordSealed = r.password
-                        ?.let { SecretVault.seal(it.toByteArray(Charsets.UTF_8)) }
-                        ?: existing?.passwordSealed,
-                    // A key that stayed ashore must not leave a dangling reference.
-                    identityId = r.identityId?.takeIf { it in identityIds },
-                    harbor = r.harbor,
-                    colorHex = r.colorHex,
-                    startupCommand = r.startupCommand,
-                    autoReconnect = r.autoReconnect,
-                    lastConnectedAt = maxOf(existing?.lastConnectedAt ?: 0L, r.lastConnectedAt),
-                    createdAt = if (r.createdAt > 0) r.createdAt else existing?.createdAt
-                        ?: System.currentTimeMillis(),
-                    lastModified = r.lastModified,
+                r.toHostEntity(
+                    existing = existing,
+                    identityIds = identityIds,
+                    sealedPassword = r.password?.let { SecretVault.seal(it.toByteArray(Charsets.UTF_8)) },
                 ),
             )
             landed++
@@ -289,3 +258,52 @@ class Reliquary(
             .apply { timeZone = TimeZone.getTimeZone("UTC") }
             .format(Date())
 }
+
+/** A mooring as it travels in a reliquary; the password is already opened by the caller. */
+internal fun HostEntity.toRHost(password: String?): RHost = RHost(
+    id = id,
+    name = name,
+    host = host,
+    port = port,
+    username = username,
+    password = password,
+    identityId = identityId,
+    harbor = harbor,
+    colorHex = colorHex,
+    startupCommand = startupCommand,
+    autoReconnect = autoReconnect,
+    agentForwarding = agentForwarding,
+    jumpHostId = jumpHostId,
+    lastConnectedAt = lastConnectedAt,
+    createdAt = createdAt,
+    lastModified = lastModified,
+)
+
+/**
+ * A mooring landing from a reliquary. [sealedPassword] is the travelled password,
+ * sealed by the caller; without one the existing seal stays. A key that stayed
+ * ashore must not leave a dangling reference; a jump mooring may land later in the
+ * same reliquary, and one that never does crosses straight (HostVault.jumpHost).
+ */
+internal fun RHost.toHostEntity(
+    existing: HostEntity?,
+    identityIds: Set<String>,
+    sealedPassword: ByteArray?,
+): HostEntity = HostEntity(
+    id = id,
+    name = name,
+    host = host,
+    port = port,
+    username = username,
+    passwordSealed = sealedPassword ?: existing?.passwordSealed,
+    identityId = identityId?.takeIf { it in identityIds },
+    harbor = harbor,
+    colorHex = colorHex,
+    startupCommand = startupCommand,
+    autoReconnect = autoReconnect,
+    agentForwarding = agentForwarding,
+    jumpHostId = jumpHostId?.takeIf { it != id },
+    lastConnectedAt = maxOf(existing?.lastConnectedAt ?: 0L, lastConnectedAt),
+    createdAt = if (createdAt > 0) createdAt else existing?.createdAt ?: System.currentTimeMillis(),
+    lastModified = lastModified,
+)

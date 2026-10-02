@@ -113,7 +113,7 @@ fun DockScreen(
     onSoundFleet: suspend (List<HostEntity>) -> Unit,
     liveSessionFor: (HostEntity) -> String?,
     onOpenHold: (String) -> Unit,
-    onFetchTailnet: suspend (HostEntity) -> Result<String>,
+    onErrand: suspend (HostEntity, String) -> Result<String>,
     onAddMoorings: (List<HostDraft>) -> Unit,
     historyCount: Int = 0,
     onClearHistory: () -> Unit = {},
@@ -379,6 +379,7 @@ fun DockScreen(
                 onSave(draft)
                 onDismissMooringOffer()
             },
+            moorings = hosts,
             onDelete = { id ->
                 editing = null
                 onDelete(id)
@@ -416,7 +417,7 @@ fun DockScreen(
             hosts = hosts,
             identities = identities,
             onDismiss = { showFleet = false },
-            onFetchTailnet = onFetchTailnet,
+            onErrand = onErrand,
             onAddMoorings = onAddMoorings,
         )
     }

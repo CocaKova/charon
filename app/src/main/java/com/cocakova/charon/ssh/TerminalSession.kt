@@ -125,6 +125,15 @@ class TerminalSession(
         sendText(if (focused) "\u001b[I" else "\u001b[O")
     }
 
+    private val _keyLent = MutableStateFlow(0L)
+    /** Ticks each time the lent key signed for the far shore (agent forwarding). */
+    val keyLent: StateFlow<Long> = _keyLent
+
+    /** Called from an agent channel's thread: the key just signed onward. */
+    fun noteKeyLent() {
+        _keyLent.value += 1
+    }
+
     /** The mouse mode the remote asked for (0 off, else 9/1000/1002/1003). */
     val mouseMode: Int get() = synchronized(lock) { term.mouseMode }
 

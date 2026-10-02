@@ -20,6 +20,8 @@ data class HostDraft(
     val colorHex: String? = null,
     val startupCommand: String = "",
     val autoReconnect: Boolean = true,
+    val agentForwarding: Boolean = false,
+    val jumpHostId: String? = null,
 )
 
 /**
@@ -30,6 +32,11 @@ data class HostDraft(
  * the user backs out of the prompt.
  */
 class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
+
+    private companion object {
+        /** How many shores a crossing may hop through on its way. */
+        const val MAX_JUMPS = 3
+    }
 
     val hosts: Flow<List<HostEntity>> = dao.all()
 
@@ -54,6 +61,8 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
                 colorHex = draft.colorHex,
                 startupCommand = draft.startupCommand.trim(),
                 autoReconnect = draft.autoReconnect,
+                agentForwarding = draft.agentForwarding,
+                jumpHostId = draft.jumpHostId?.takeIf { it != (existing?.id ?: draft.id) },
                 lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                 createdAt = existing?.createdAt ?: now,
                 lastModified = now,
@@ -64,11 +73,15 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
     suspend fun delete(id: String) = dao.delete(id)
 
     /** Unseal and assemble the crossing config; null = biometric prompt dismissed. */
-    suspend fun connectConfig(host: HostEntity): ConnectConfig? {
+    suspend fun connectConfig(host: HostEntity): ConnectConfig? = connectConfig(host, setOf(host.id))
+
+    private suspend fun connectConfig(host: HostEntity, seen: Set<String>): ConnectConfig? {
         val material = host.identityId?.let { id ->
             val identity = keyVault.byId(id) ?: return@let null
             keyVault.material(identity) ?: return null // bio prompt dismissed
         }
+        val jumpHost = jumpHost(host.jumpHostId, seen)
+        val jump = if (jumpHost != null) connectConfig(jumpHost, seen + jumpHost.id) ?: return null else null
         return ConnectConfig(
             host = host.host,
             port = host.port,
@@ -79,7 +92,19 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
             keyPassphrase = material?.passphrase,
             startupCommand = host.startupCommand,
             autoReconnect = host.autoReconnect,
+            jump = jump,
+            agentForwarding = host.agentForwarding && material != null,
         )
+    }
+
+    /**
+     * The mooring to cross by way of, resolved like any other (its own key, its own
+     * prompt). A chain that loops back on itself, or runs deeper than three shores,
+     * stops there; a jump mooring that was released crosses straight.
+     */
+    private suspend fun jumpHost(jumpId: String?, seen: Set<String>): HostEntity? {
+        if (jumpId == null || jumpId in seen || seen.size > MAX_JUMPS) return null
+        return dao.byId(jumpId)
     }
 
     /** Same, for an unsaved draft straight off the edit sheet. */
@@ -89,6 +114,9 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
             val identity = keyVault.byId(id) ?: return@let null
             keyVault.material(identity) ?: return null
         }
+        val seen = setOfNotNull(draft.id)
+        val jumpHost = jumpHost(draft.jumpHostId, seen)
+        val jump = if (jumpHost != null) connectConfig(jumpHost, seen + jumpHost.id) ?: return null else null
         return ConnectConfig(
             host = draft.host.trim(),
             port = draft.port,
@@ -100,6 +128,8 @@ class HostVault(private val dao: HostDao, private val keyVault: KeyVault) {
             keyPassphrase = material?.passphrase,
             startupCommand = draft.startupCommand,
             autoReconnect = draft.autoReconnect,
+            jump = jump,
+            agentForwarding = draft.agentForwarding && material != null,
         )
     }
 
