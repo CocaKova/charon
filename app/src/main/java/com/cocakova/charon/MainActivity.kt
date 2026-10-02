@@ -22,6 +22,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.cocakova.charon.fleet.HailTarget
+import com.cocakova.charon.reach.Reach
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -61,6 +67,8 @@ class MainActivity : FragmentActivity() {
         Sky.load(getSharedPreferences("charon", MODE_PRIVATE))
         val app = application as CharonApp
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, app)
+        // A recreated activity carries the same intent: only a fresh start reads it.
+        if (savedInstanceState == null) Reach.receive(intent)
         setContent {
             CharonTheme {
                 CharonRoot(
@@ -75,6 +83,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        Reach.receive(intent)
         // Repeated adb `am start` lands here, not onCreate.
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, application as CharonApp)
     }
@@ -161,6 +171,13 @@ private fun CharonRoot(
     val soundings by fleetWatch.soundings.collectAsState()
     val historyEntries by commandHistory.entries.collectAsState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // The launcher's long-press list follows the moorings (the vault's own emissions,
+    // never the empty list the screen starts from).
+    LaunchedEffect(Unit) {
+        hostVault.hosts.collect { list -> withContext(Dispatchers.Default) { Reach.publishShortcuts(context, list) } }
+    }
 
     val current = active
     // Terminal on screen whenever a session is active; null active = the Dock, with
@@ -168,6 +185,40 @@ private fun CharonRoot(
     // hold (SFTP) for one session; it clears itself if that session closes.
     val showTerminal = current != null
     var filesFor by remember { mutableStateOf<String?>(null) }
+    var incomingHail by remember { mutableStateOf<HailTarget?>(null) }
+
+    // Asks from outside the Dock (a link, a shortcut, the tile, a horn), one at a time.
+    LaunchedEffect(Unit) {
+        Reach.pending.filterNotNull().collect { ask ->
+            when (ask) {
+                is Reach.Ask.HailFor -> {
+                    filesFor = null
+                    sessionManager.showDock()
+                    incomingHail = ask.target
+                }
+                is Reach.Ask.Moor -> {
+                    val host = hostVault.hosts.first().firstOrNull { it.id == ask.hostId }
+                    if (host != null) {
+                        filesFor = null
+                        val live = sessionManager.sessions.value
+                            .firstOrNull { sessionManager.hostIdFor(it.id) == host.id }
+                        if (live != null) {
+                            sessionManager.switchTo(live.id)
+                        } else {
+                            hostVault.connectConfig(host)?.let { sessionManager.connect(it, hostId = host.id) }
+                        }
+                    }
+                }
+                is Reach.Ask.Board -> {
+                    if (sessionManager.sessions.value.any { it.id == ask.sessionId }) {
+                        filesFor = null
+                        sessionManager.switchTo(ask.sessionId)
+                    }
+                }
+            }
+            Reach.taken(ask)
+        }
+    }
     LaunchedEffect(sessions) {
         if (filesFor != null && sessions.none { it.id == filesFor }) filesFor = null
     }
@@ -259,6 +310,8 @@ private fun CharonRoot(
                         }
                     }
                 },
+                incomingHail = incomingHail,
+                onIncomingHailTaken = { incomingHail = null },
                 onHail = { draft ->
                     scope.launch {
                         hostVault.draftConfig(draft)?.let {

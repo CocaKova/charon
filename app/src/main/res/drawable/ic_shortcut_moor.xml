@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A launcher shortcut to a mooring: the lantern on the night water. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#0A0F14"
+        android:pathData="M12,12 m-12,0 a12,12 0 1,1 24,0 a12,12 0 1,1 -24,0" />
+    <path
+        android:strokeColor="#3ECFB2"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M4,16 q2,-1.8 4,0 t4,0 t4,0 t4,0" />
+    <path
+        android:fillColor="#D9A441"
+        android:pathData="M12,9 m-2.2,0 a2.2,2.2 0 1,1 4.4,0 a2.2,2.2 0 1,1 -4.4,0" />
+    <path
+        android:strokeColor="#D9A441"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"
+        android:pathData="M12,4.6 L12,6.4" />
+</vector>

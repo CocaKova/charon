@@ -114,6 +114,9 @@ fun DockScreen(
     liveSessionFor: (HostEntity) -> String?,
     onOpenHold: (String) -> Unit,
     onErrand: suspend (HostEntity, String) -> Result<String>,
+    /** An ssh:// link from outside: open the hail sheet with it, once. */
+    incomingHail: HailTarget? = null,
+    onIncomingHailTaken: () -> Unit = {},
     onAddMoorings: (List<HostDraft>) -> Unit,
     historyCount: Int = 0,
     onClearHistory: () -> Unit = {},
@@ -126,6 +129,9 @@ fun DockScreen(
 ) {
     var editing by remember { mutableStateOf<EditTarget?>(null) }
     var hailing by remember { mutableStateOf<HailTarget?>(null) }
+    LaunchedEffect(incomingHail) {
+        incomingHail?.let { hailing = it; onIncomingHailTaken() }
+    }
     val haptic = LocalHapticFeedback.current
 
     var showKeys by remember { mutableStateOf(false) }

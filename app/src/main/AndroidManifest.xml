@@ -24,7 +24,26 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- ssh:// links from anywhere on the phone open the hail sheet, filled in;
+                 nothing casts off until the traveller says go. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ssh" />
+            </intent-filter>
         </activity>
+
+        <service
+            android:name=".reach.RiverTile"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_obol"
+            android:label="Charon"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".service.ConnectionService"
