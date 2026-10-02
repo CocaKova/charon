@@ -97,7 +97,7 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
   enhancement). Full modifier + key disambiguation. Helix, neovim, kakoune *require* this to
   tell `Ctrl+I` from `Tab`, report `Ctrl+Shift+key`, and handle key-release. Encoder work in
   `KeyEncoder` + a mode flag; the biggest single "modern TUI works right" unlock.
-  > **Status: LANDED (unreleased)** — per-screen flag stacks (`CSI > u` / `< u` / `= u` / `? u`,
+  > **Status: SHIPPED in v1.2.0** — per-screen flag stacks (`CSI > u` / `< u` / `= u` / `? u`,
   > cleared by RIS and DECSTR) and a port of kitty's own encoder: flags 1 (disambiguate),
   > 2 (press/repeat/release — hardware keys and RAW-mode soft keys), 4 (shifted + US base-layout
   > alternates), 8 (all keys as escapes, modifier keys included) and 16 (associated text). Sticky
@@ -106,19 +106,21 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
 - **The deep colors — undercurl & colored underlines** (`SGR 4:3` curly / `4:4` dotted /
   `4:5` dashed, `SGR 58/59` underline color). This is how nvim draws LSP squiggles. Pure
   renderer work — draw a sine underline in the cell's underline slot.
-  > **Status: SHIPPED for the next release (after v1.1.2)** — `4:0`–`4:5` + `21`
+  > **Status: SHIPPED in v1.2.0** — `4:0`–`4:5` + `21`
   > double, `58`/`59` in colon and semicolon forms, stored in `CellExt` (a
   > lazily-allocated per-line side array, so plain text pays nothing); hand-drawn
   > smooth curl / dots / dashes / double that scale with pinch-zoom, in the
   > underline color or the fg.
 - **Marked passages — OSC 8 hyperlinks.** Real semantic links (not regex-guessed). Tap to open
   the Android browser; long-press to copy or share. Pairs with the touch hint mode in Tier 3.
-  > **Status: SHIPPED for the next release (after v1.1.2)** — `OSC 8` open/close with
+  > **Status: SHIPPED in v1.2.0** — `OSC 8` open/close with
   > `id=` grouping, URIs interned in a capped per-terminal `HyperlinkTable` (ids in
   > the cell, swept when full), links survive into scrollback. Quiet dotted underline
   > in the livery's accent; tap (or long-press inside mouse apps) raises a confirm
   > sheet — real host + full URI, open (http/https/mailto only) / copy / select.
-  > Never opens silently.
+  > Never opens silently. Plain-text URLs are tappable too (v1.2.0); a link to the far
+  > side's `localhost` carries itself across as an L channel and opens on the phone;
+  > `file://` links open the hold at that path.
 - **Soundings — shell integration (OSC 133 semantic prompts + OSC 7 cwd).** The terminal learns
   where prompts start/end and whether the last command succeeded. This unlocks a *lot*:
   prompt-to-prompt jump, a red/green mooring-post glyph in the gutter per command, cwd-aware
@@ -128,12 +130,14 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
   > **Status:** OSC 133 `D`/`C` feed the horn; **OSC 7 cwd → cwd-aware autocomplete
   > SHIPPED** — relative paths in file positions and git branch names complete from
   > where the shell stands (`docs/INPUT.md` §2b item 5; rig + tmux notes in
-  > `docs/HORN.md`). Still to come: `A`/`B` prompt marks → prompt-to-prompt jump and
-  > the gutter glyph, and Charon installing the rig itself over the exec channel.
+  > `docs/HORN.md`). **v1.2.0:** `A`/`B`/`C`/`D` hang on their lines — a duration
+  > whisper (`✓ 2m14s` / `✕ exit 2`) beside each finished prompt, ⇡ ⇣ prompt hops,
+  > and Charon rigs the shell itself over the exec channel with the traveller's
+  > consent (exact lines, exact file, nothing written until "rig it").
 - **XTVERSION / kitty query / DECRQSS** so remote programs *detect* Charon and light up their
   fancy paths. Without this, `kitten icat` won't even try to send an image.
   > **Status: XTVERSION shipped in v1.1** (`DCS >| Charon(<version>) ST`); the kitty keyboard
-  > query (`CSI ? u`) landed with the protocol above. DECRQSS still to come.
+  > query (`CSI ? u`) landed with the protocol above. DECRQSS and XTGETTCAP shipped in v1.2.0.
 
 ---
 
@@ -144,16 +148,20 @@ the invisible protocols that separate a 2015 terminal from a 2026 one.
 - **Dredging the wake — search in scrollback.** Regex, live highlight, jump between hits. On a
   phone this is huge — you can't just eyeball 10k lines. A themed search bar (teal matches,
   gold current hit).
-  > **Status: SHIPPED in v1.1.2** — `SearchEngine.find` (case-folded substring, non-overlapping,
-  > rows in selection space), `DredgeBar` over the water with ▲/▼/✕ pills, gold wash on the
-  > current hit, teal on the rest, tap-a-pill jumps the glass to each sighting.
+  > **Status: SHIPPED in v1.1.2; v2 in v1.2.0** — regex (`.*`), smart-case, matches across
+  > soft wraps, wide-char columns, starts at the newest hit, refreshes live while open,
+  > and the scan runs off the session lock on a copy of the text.
 - **The catch — hint / quick-select mode.** Kitty's `hints` and tmux-fingers: overlay labels
   on every URL / path / IP / git-hash / port on screen, grab one with a keystroke. **Mobile
   surpass:** skip the labels — you just *tap* the thing. One-tap "open URL / copy path / SSH to
   that host / open that file in the hold." Extends the OSC 8 work and the existing URL sense.
+  > **Status: partly, v1.2.0** — URLs (marked or plain) are tappable, localhost ones
+  > forward themselves and `file://` opens the hold. Paths, IPs and hashes: not yet.
 - **The river remembers its banks — reflow on resize.** The data model is already reflow-ready
   (`Line.isWrapped` from day one). A phone *rotates* — this is a bigger correctness win here
   than on any desktop. Rewrap scrollback on width change instead of hard-truncating.
+  > **Status: not yet** — scoped and deferred from v1.2.0 (cursor, marks, images and
+  > search numbering all have to follow the rewrap; it ships when it can ship whole).
 - **One voice to the fleet — broadcast input.** Type once, send to N sessions. Homelab
   superpower (`apt upgrade` across the whole tailnet). Reuses the v0.5 multi-session model.
 
@@ -170,15 +178,19 @@ pointless on a desktop and native on a phone.
   back to that session at that mooring post. This uses the `BuiltinPushService`/specialUse FGS
   that's *already in the app* (`[[project_charon_ssh_client]]`). **No desktop terminal needs
   this. Every phone user wants it.** This is the single most valuable feature in this doc.
+  > **Status: SHIPPED** (v1.1); **v1.2.0** — the tap lands on that command's prompt in
+  > that tab, and a background tab flashes gold or ember in-app.
 - **The barge reads the hold — OSC 9;4 progress → the Lading.** Remote progress
   (`apt`, `curl`, conmon, anything emitting OSC 9;4) *steers the cargo barge* we already built
   in `CargoLading`. The barge stops being a guess and becomes a true progress readout. Pure
   integration — the barge and its animation already exist.
+  > **Status: SHIPPED in v1.2.0.**
 - **Apparition lightbox + save/share** (see Tier 1) — the reason to want images on a phone.
 - **Send a shade across** — camera/gallery → terminal/scp (see Tier 1).
 - **Haptic soundings.** The toll and lading already speak in haptics
   (`[[project_charon_ssh_client]]`). Extend it: a soft Confirm buzz when a backgrounded command
   finishes; a distinct pattern for success vs failure. Your pocket tells you the build passed.
+  > **Status: SHIPPED in v1.2.0** — two soft ticks ashore, one long low buzz aground.
 
 ---
 
@@ -206,9 +218,11 @@ pragmatic mobile one.
 - **Liveries — color-scheme packs** (Obol cosmetic). Import iTerm2/Ghostty/base16 schemes; the
   StyxCrossing scene is livery #1. This is the *only* frontier-adjacent thing that's paid, and
   only because it's pure cosmetics.
-- **OSC 9 / 777 desktop notifications** (folds into the horn).
+- **OSC 9 / 777 desktop notifications** (folds into the horn). *Shipped in v1.2.0.*
 - **Bell polish** — visual bell as a StyxTeal ripple, per-host audible/haptic/silent.
+  *Ripple + tick shipped in v1.2.0; per-host choice not yet.*
 - **True-color-aware theming, minimum-contrast** (Ghostty's readability floor).
+  *Contrast floor shipped in v1.2.0.*
 - **vttest / esctest conformance** as the v1.0 gate already promises — the frontier features add
   Kitty-protocol and Sixel conformance suites on top.
 
@@ -239,4 +253,4 @@ marquee at any time — both are self-contained enough. The default above optimi
 public 1.0 first, then a foundation-first frontier climb where the small high-leverage wins
 (soundings, the horn) land before the big one (images).
 
-*Nothing here is committed to code yet — this is the map, not the crossing.*
+*The map, with the crossings made so far marked on it (statuses above, as of v1.2.0).*

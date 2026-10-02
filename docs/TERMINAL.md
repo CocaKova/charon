@@ -42,9 +42,11 @@ unit-tested on the JVM. The bar for v0: **vim, htop, and tmux render correctly.*
 - [x] Selection + copy (`TextSelection`, scroll-aware) and scrollback + wheel-scroll
   (`ScreenBuffer.viewLine`) — see `docs/INPUT.md`
 - [x] Back-tab (CBT `ESC[Z`) in `KeyEncoder`
-- [ ] OSC 0/1/2 title; OSC 52 clipboard (behind per-host consent); OSC 4/104 palette
-- [ ] DECRQSS (minimal) — XTVERSION landed in v1.1 (see below)
-- [ ] Hardware keyboard (Ctrl/Alt combos, Ctrl+Shift+C/V)
+- [x] OSC 0/2 title (OSC 1 icon name ignored); OSC 4/104 palette set/reset; OSC 52
+  clipboard writes behind per-shore consent (reads refused) — v1.2
+- [x] DECRQSS (SGR, DECSTBM, DECSCUSR, DECSCL) and XTGETTCAP — v1.2; XTVERSION since v1.1
+- [x] Hardware keyboard (Ctrl/Alt combos, Ctrl+Shift+C/V, key releases under the kitty
+  protocol) — see `docs/INPUT.md` and the kitty section below
 
 The **input/interaction** surface (accessory row, gestures, selection, mouse, IME) is
 documented end-to-end in `docs/INPUT.md`.
@@ -149,7 +151,7 @@ sent — Android's numpad Enter is Enter); F13–F35, media keys and Hyper/Meta 
 turns it into a character, and as Alt otherwise — the legacy path, unchanged, still
 treats it as Alt.
 
-## Next release — the deep colors & marked passages
+## v1.2 — the deep colors & marked passages
 
 *How nvim draws its LSP squiggles, and real links instead of regex guesses.* See
 `docs/FRONTIER.md` Tier 2.
@@ -193,15 +195,29 @@ treats it as Alt.
   long-press (always) opens a confirm sheet; only `http`/`https`/`mailto` open via
   `ACTION_VIEW`, the rest are copy-only.
 
-Not aboard yet: **hover** (no pointer on a phone — the sheet's highlight stands in),
-underline color through **DECRQSS** (not implemented at all), and `OSC 8` link
-**hints** over plain-text URLs (Tier 3's catch).
+Not aboard yet: **hover** (no pointer on a phone — the sheet's highlight stands in)
+and underline colour in the DECRQSS SGR answer.
+
+- [x] **Plain URLs** (v1.2) — `UrlScanner`: `http(s)://`, `file://`, `ftp://` found in
+  printed text under the finger only (never scanned per frame), read across soft
+  wraps, wide cells counted once, trailing sentence punctuation and unpaired closers
+  left out. Word selection keeps `?=&#%` inside a word.
 
 ## Shell integration (soundings)
 
 - [x] **OSC 133** semantic prompts — `A`/`B`/`C`/`D[;exit]` relayed through
   `onShellMark`; the app pairs `D` with the submitted line for the horn
-  (`docs/HORN.md`). Marks never touch the grid.
+  (`docs/HORN.md`). Since v1.2 each command is a `CommandMark` hung on its lines the
+  way images are: `A` on the prompt line, `C` on the first output line, `B` notes the
+  input column, `D` closes it with the exit code. The mark scrolls with its line,
+  dies with it (clear, eviction), and never holds the command's text. On the
+  alternate screen (a shell inside tmux) commands are followed but nothing hangs on a
+  line, since those lines are redrawn in place. The app uses them for the duration
+  whisper, prompt hops and the horn landing on its command.
+- [x] **OSC 9 / OSC 777** (v1.2) — `OSC 9 ; text` (iTerm2) and
+  `OSC 777 ; notify ; title ; body` → `onNotify`; ConEmu's numbered OSC 9 forms are
+  left alone except **`9;4;state;value`** progress → `onProgress` (the cargo barge).
+- [x] **Seams** (v1.2) — `Line.seam`: where a dropped crossing was re-made.
 - [x] **OSC 7** working directory — `ESC ] 7 ; file://host/path` (BEL or ST).
   `ShellCwd.parse`: `file:` scheme only (case-insensitive), host = the authority
   (`""` for `file:///p` or `file:/p`), path percent-decoded to strict UTF-8 (raw
@@ -211,11 +227,28 @@ underline color through **DECRQSS** (not implemented at all), and `OSC 8` link
   of saying the active pane has no path). Exposed as `TerminalEmulator.cwd` +
   `onCwd`; what it means for completion lives in the app (`docs/INPUT.md` §2b).
 
+## v1.2 — the modern contract, second half
+
+- [x] **DECSCUSR** shapes drawn (block / underline / bar, steady or blinking, ~120 ms
+  morph); **focus events** (1004) sent on tab and app focus; **bell** as a ripple;
+  **synchronized output** (2026) holds the last finished frame; **DECRQM** answers
+  every mode kept; mouse **drag** reported in 1002/1003 apps.
+- [x] **Search v2** — `SearchEngine.snapshot` copies the held text under the lock,
+  `find` scans the copy off it: plain or regex, smart-case, soft-wrapped lines joined,
+  cell columns (wide glyphs = 2), hits named by a lasting line number
+  (`ScreenBuffer.linesPushed` + row) so they stay on their words while output scrolls.
+- [x] **Contrast floor** — `Contrast.floor`: a foreground under 3:1 against a light
+  ground (2:1 on a dark one) is walked toward ink until it reads; hue kept, hidden
+  text (fg = bg) stays hidden.
+- [x] **Resize keeps the prompt** — a height shrink sends lines over the top into
+  scrollback (and a grow pulls them back) instead of cutting the bottom rows.
+
 ## Explicit non-goals (until someone asks)
 
-Scrollback reflow (v1.x backlog — data model is ready via `isWrapped`), perfect
-grapheme clustering (we match remote `wcwidth()` — that's what programs
-lay out against).
+Scrollback **reflow** — still not done (data model ready via `isWrapped`; a width
+change today pads or truncates each line, so narrowing loses the columns past the new
+width). Perfect grapheme clustering (we match remote `wcwidth()` — that's what
+programs lay out against).
 
 ## Test strategy
 

@@ -31,8 +31,8 @@ android {
         applicationId = "com.cocakova.charon"
         minSdk = 24
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.1.2"
+        versionCode = 23
+        versionName = "1.2.0"
     }
 
     // ---- Tiers ------------------------------------------------------------

@@ -39,7 +39,29 @@ The Dock is your fleet.
   - **tailnet** — reads `tailscale status` over an existing connection and offers
     every peer as a mooring.
   - **near waters** — sweeps your Wi-Fi /24 for machines answering on port 22.
+  - **ssh config** — reads an OpenSSH `~/.ssh/config`, asked of a mooring
+    (`cat ~/.ssh/config` over its crossing) or pasted. Each `Host` keeps its own
+    `User`, `Port`, `ProxyJump` (found among the ships moored in the same go, or
+    among moorings you already have) and `ForwardAgent`. Wildcard blocks are
+    defaults, never ships; `Match`, `Include`, `ProxyCommand` and `IdentityFile`
+    can't cross from a phone and are named in notes rather than guessed at.
   Pick the sightings you want, set the shared username/port/key, and they dock.
+- **Hail a ferry** — type `user@host[:port]` (or paste an `ssh://` link) on the Dock
+  to cross once without mooring anything. The ferryman still checks the host's key.
+  When it comes home, one quiet line offers to moor it.
+- **Ways in from outside:** an `ssh://user@host:port` link anywhere on the phone
+  opens the hail sheet filled in (it never casts off on its own); a long press on
+  Charon's launcher icon lists your latest moorings and crosses to one (or steps
+  aboard its live crossing); the **Charon** quick-settings tile counts crossings
+  under way and takes you to the one you last stood on.
+- **A first crossing** plays on the Dock: the boat poles off during the handshake,
+  holds mid-river while a host key or a server's question waits for you (**turn
+  back** calls it off), and the terminal dissolves in on landing. With crossings
+  still at sea the boat stays out on the water; it comes home when the last one ends.
+- A trusted host's key draws a small **braille sigil** on its card (and on the trust
+  sheet). A rekeyed host draws a different one.
+- The river and the lanterns move only when there's news — a crossing, a sounding —
+  and then hold still. A still Dock costs no battery.
 
 ## 3. Keys of passage
 
@@ -57,6 +79,19 @@ Open **the keys** (key icon on the Dock):
   crosses passwordless.
 
 Attach a key to a mooring in the host editor. Vault export includes keys — see §11.
+
+**More ways across** (host editor):
+
+- **Two-factor and PAM-only servers** (keyboard-interactive): the server's own
+  questions come up as a sheet. A saved password answers the first password prompt
+  once; a one-time code or anything else is yours to answer. Answers are never
+  stored or logged.
+- **Cross via** (ProxyJump): pick another mooring to hop through. Each shore checks
+  its own host key and asks its own questions. Up to three hops; a loop stops.
+- **Lend the key onward** (agent forwarding): the far side can ask this mooring's
+  key for signatures (for `git` or a further `ssh`) and nothing else; every
+  signature shows a gold **⚿ your key signed onward** pill. Off unless you turn it on,
+  and only for a mooring with a key attached.
 
 ## 4. At sea — the terminal
 
@@ -86,8 +121,27 @@ xterm-conformance-tested (see `TERMINAL.md`).
   to each), ✕ releases the dredge and returns to live.
   Case folds itself; matches run oldest-first from the deep scrollback up onto the
   live grid.
-- Every grid re-snap flashes a **cols×rows** pill — ember-tinted when you're under
-  80×24, which full-screen tools like btop insist on (zoom out, or go landscape).
+  Since 1.2 the dredge also takes **patterns** (the **.\*** pill turns regex on),
+  is **smart-case** (a capital in the query asks for exact case), finds a match the
+  grid wrapped across two rows, puts the wash on the right cells next to wide (CJK,
+  emoji) characters, starts at the **newest** sighting, and keeps reading as output
+  arrives while it's open, staying on the sighting you're looking at.
+- A flick on the scrollback **coasts** and slows down like water; a touch stops it.
+- When the width re-snaps (a pinch, a rotation) a **cols×rows** pill flashes: teal
+  normally, gold when a full-screen program is up and the grid is under 80×24 (zoom
+  out or go landscape), ember only when the glass is genuinely too small. The
+  keyboard rising or falling doesn't flash it.
+- **Soundings** (a rigged shell, see §10): a faint **✓ 2m14s** or **✕ exit 2** sits at
+  the end of each finished prompt line, and when you're scrolled back **⇡ ⇣** hop
+  from command to command.
+- **A seam in the wake** — after a dropped crossing is re-made, a gold dashed rule
+  marks the spot in the scrollback: *re-crossed 14:02 · 8s adrift*.
+- **Re-crossing** keeps your screen readable under a light veil, counts down to the
+  next try (**cross now** skips the wait), and says *network's back — crossing now*
+  the moment the phone's network returns.
+- **Daybreak** (the paper livery) holds every glyph to a minimum contrast, so a
+  program's white text still reads on paper; selections and sightings wash in the
+  livery's own colours.
 
 **Marked passages — links.** When the far side marks text as a real link (OSC 8 —
 `ls --hyperlink=auto`, `gcc`/`clang` diagnostics, `delta`, `systemctl`, `eza`, many
@@ -106,6 +160,31 @@ both the words and the target:
 While the sheet is up, every piece of that link glows — even when it's split across
 lines. Links stay tappable in your scrollback. Inside a mouse app (tmux with mouse
 on, htop) a tap belongs to the app; **long-press** the link to reach its sheet.
+
+**Plain URLs** printed as text (no OSC 8) are links too: tap one and the same sheet
+rises. A long-press keeps a URL's `?`, `=`, `&`, `#` and `%` inside the selection.
+
+- **localhost links carry themselves.** Tap `http://localhost:5173` in `npm run dev`
+  output and the sheet offers **carry & open**: Charon opens a channel from the same
+  port on the phone (any free port if that one's taken) to the far side's
+  `localhost:5173` and opens it in your browser. The channel lives as long as the
+  crossing and isn't saved.
+- **`file://` links** (`ls --hyperlink`) offer **open the hold** at that path (a file
+  opens its folder).
+
+**The modern contract** — what neovim, tmux and friends expect, aboard since 1.2:
+
+- the cursor takes the shape the program asks for (vim's insert-mode bar, replace
+  underline) and morphs between them;
+- the bell is a teal ring from the cursor with a light tick, never more than a few
+  a second;
+- a tmux or nvim yank (OSC 52) reaches the phone's clipboard only after you say yes,
+  once per shore; the far side can never read your clipboard;
+- focus in/out (1004) as you switch tabs or leave the app, synchronized frames (2026)
+  so TUIs never show a half-drawn screen, DECRQM/DECRQSS/XTGETTCAP answers, and real
+  drags in mouse apps;
+- the keyboard rising never eats the prompt: lines leave over the top into
+  scrollback, and come back when it falls.
 
 **The accessory row** (above the keyboard):
 
@@ -203,12 +282,21 @@ forget everything. Pasted lines are never learned.
 
 ## 7. The hold — files (SFTP)
 
-From the session switcher, **⇅** opens the hold:
+From the session switcher, **⇅** opens the hold — at the shell's own directory when
+it's rigged (OSC 7), else at home:
 
-- Browse the remote tree (▸ dirs, ⇝ links); long-press a file for its cargo sheet —
-  **carry it ashore** (download via the system file picker), rename it, or release
-  it into the river (delete). **⇡** carries a local file aboard; **+** makes a
+- Browse the remote tree (▸ dirs, ⇝ links). The strip under the bar sorts **by
+  name / size / time** (folders first) and shows or hides **dotfiles**; both are
+  remembered.
+- **Long-press** chooses: tap more to add them, then **⇣ ashore** carries the files
+  into one folder you pick, **release** deletes them all (after one confirm), and
+  with just one chosen **⋯** opens its cargo sheet — carry it ashore, rename it, or
+  release it. **⇡** carries local files aboard (several at once); **+dir** makes a
   directory.
+- **Pictures** (png, jpg, gif, webp, heic…) open in place for a look, scaled to the
+  glass; **⇣ ashore** saves one.
+- **Editing a scroll**: a small text file (under 256K, clean UTF-8) has **edit** in
+  its reader. **save** writes it back whole; back with unsaved edits asks once.
 - **Reading a scroll**: tap a text file — `.md`, `.txt`, `.log`, `.conf`, config,
   source, a dotfile — and it opens *in place*, no download and no second app.
   Markdown is rendered (headings, lists, quotes, tables, code blocks, inline
@@ -237,6 +325,17 @@ From the session switcher, **⇆** charts channels:
 
 - Each connection is a tab in the switcher; the Dock stays reachable (⌂) with
   crossings live. A notification shows how many are at sea.
+- A tab's dot is a **latency lantern**: it breathes while its crossing is busy,
+  slower and warmer (toward ember) as the time from keystroke to echo climbs, and
+  holds still when nothing's happening. Long-press the tab to read it (*echo 42 ms*).
+  A mooring with a lantern colour tints its tab dot and the waterline under the tabs
+  — give your production hosts ember.
+- A tab you aren't on flashes **gold** when a long command (5 s+) comes home, a
+  program calls (OSC 9/777), and **ember** when one runs aground; it keeps that hue
+  until you step aboard.
+- Closing a live tab takes two taps: the first turns **×** into an ember *close?*.
+- The **waterline** under the tabs reads the output rate: flat when nothing's
+  arriving, a swell under a trickle, choppy in a flood.
 - A tab is named by the remote's window title when it sets one (falling back to
   `user@host`). With `set -g set-titles on` in tmux — and, say,
   `set -g set-titles-string "#W"` — each tab wears its tmux window's name.
@@ -253,9 +352,22 @@ From the session switcher, **⇆** charts channels:
 
 ## 10. The horn
 
-Flip **the horn** at the helm and rig your shell with the block in
-[HORN.md](HORN.md) (the same rig powers the soundings in §5): any command that runs ≥ 15 s while you're in another app blows
-the horn — a notification saying it finished (or *ran aground* with its exit code).
+Flip **the horn** at the helm and rig your shell: long-press the mooring on the Dock →
+**rig the horn**. Charon asks the shore which shell it logs in with (bash, zsh, fish),
+shows you the exact lines and the exact rc file, and writes nothing until you tap
+**rig it** (the block sits between `# >>> charon rig >>>` markers; [HORN.md](HORN.md)
+has it for doing by hand). The same rig powers the soundings in §4–§5.
+
+- Any command that runs ≥ 15 s while you're in another app blows the horn — a
+  notification saying it finished (or *ran aground* with its exit code). Tapping it
+  opens **that tab, scrolled to that command**.
+- You feel it too: **two soft ticks** for ashore, **one long low buzz** for aground
+  (in the app on another tab you get the buzz and the tab flash, no notification).
+- Programs can call you themselves: `printf '\e]9;build done\a'` (OSC 9) or OSC 777
+  `notify;title;body` post a notification while you're away — at most one every ten
+  seconds per crossing.
+- A program's own progress bar (OSC 9;4) steers the cargo barge.
+
 Command lines never appear on the lock screen.
 
 ## 11. The reliquary — vault export/import
@@ -290,6 +402,12 @@ Gear icon on the Dock:
 - **the reliquary** — see §11.
 
 ## 13. Ran aground? — troubleshooting
+
+A failed crossing says the error twice: the literal message first (so nothing is
+hidden from you), then what it most likely means in plain words — no such host,
+nothing listening on that port, no answer (asleep or firewalled), every key and
+password refused, a key that wouldn't open. The hold does the same when SFTP won't
+open (often: the server has no `Subsystem sftp` line).
 
 - **"terminal size too small" (btop, htop)** — you're under 80×24. Pinch out (6 sp
   fits 80 columns portrait), or rotate.
