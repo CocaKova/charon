@@ -47,6 +47,7 @@ import com.cocakova.charon.theme.TerminalScheme
 import com.cocakova.charon.theme.TerminalSchemes
 import com.cocakova.charon.theme.Sky
 import com.cocakova.charon.theme.Styx
+import com.cocakova.charon.theme.Tide
 import kotlin.math.roundToInt
 
 /**
@@ -250,7 +251,7 @@ fun SettingsSheet(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "the terminal's colours — worn from your next crossing",
+                "the terminal's colours from your next crossing; the river wears its hue now",
                 style = MaterialTheme.typography.bodySmall,
                 color = Styx.mist,
             )
@@ -265,6 +266,7 @@ fun SettingsSheet(
                         onClick = {
                             scheme = livery.name
                             prefs.edit().putString("scheme", livery.name).apply()
+                            Tide.wear(livery)
                         },
                     )
                     Spacer(Modifier.width(10.dp))
@@ -276,6 +278,7 @@ fun SettingsSheet(
                 onSelect = { name ->
                     scheme = name
                     prefs.edit().putString("scheme", name).apply()
+                    (TerminalSchemes.all + Obol.customLiveries(prefs)).firstOrNull { it.name == name }?.let(Tide::wear)
                 },
                 onChanged = { liveryRev++ },
             )

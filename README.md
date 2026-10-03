@@ -35,7 +35,7 @@ troubleshooting section.
 
 ## Features
 
-These are in v1.2.0.
+These are in v1.2.1.
 
 | Area | What you get |
 |---|---|

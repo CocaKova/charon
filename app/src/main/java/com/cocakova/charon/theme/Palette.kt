@@ -5,6 +5,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 
 /**
  * The river's colors, named by role rather than by hue, so every screen reads the
@@ -63,6 +65,32 @@ val DaybreakPalette = CharonPalette(
 )
 
 val LocalCharonPalette = staticCompositionLocalOf { NightPalette }
+
+/** Night or daybreak, asked of the ground rather than by identity: a palette the
+ *  livery has re-watered is a copy, and still the same sky. */
+val CharonPalette.isNight: Boolean get() = night == NightPalette.night
+
+/**
+ * The palette re-watered by the livery's accent (its cursor colour): the river,
+ * the waterline, the glow and every water-coloured control take the livery's hue,
+ * and the coin, the ember and the grounds stay the sky's own. Null keeps the Styx.
+ * By day the accent is inked toward the text colour until it reads on paper.
+ */
+fun CharonPalette.wateredBy(accent: Color?): CharonPalette {
+    if (accent == null) return this
+    var water: Color = accent
+    if (!isNight) {
+        var i = 0
+        while (contrast(water, night) < 4.5f && i < 10) { water = lerp(water, bone, 0.15f); i++ }
+    }
+    return copy(water = water, waterDeep = lerp(water, night, if (isNight) 0.45f else 0.35f))
+}
+
+private fun contrast(a: Color, b: Color): Float {
+    val la = a.luminance() + 0.05f
+    val lb = b.luminance() + 0.05f
+    return if (la > lb) la / lb else lb / la
+}
 
 /**
  * The one way UI code names a color. `Styx.water`, `Styx.coin`, `Styx.bone` —

@@ -31,6 +31,7 @@ import androidx.core.content.res.ResourcesCompat
 import com.cocakova.charon.R
 import com.cocakova.charon.theme.DaybreakPalette
 import com.cocakova.charon.theme.LocalCharonPalette
+import com.cocakova.charon.theme.isNight
 import com.cocakova.charon.theme.NightPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -61,7 +62,11 @@ fun StyxCrossing(
     fontSize: TextUnit = 12.sp,
 ) {
     val context = LocalContext.current
-    val ink = if (LocalCharonPalette.current === NightPalette) NightInk else DaybreakInk
+    // The sea takes the palette's water, so a livery re-waters the river too (1.2.1).
+    val palette = LocalCharonPalette.current
+    val ink = remember(palette) {
+        (if (palette.isNight) NightInk else DaybreakInk).copy(sea = palette.water.toArgbInt())
+    }
     val density = LocalDensity.current
     val paint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -116,22 +121,18 @@ fun StyxCrossing(
             }
         }
 
-        // The river moves only when something is happening — a crossing, the boat
-        // under way, or a few seconds' settling after either (or after the Dock comes
-        // into view) — and never while the app is out of sight. Idle, it holds its
-        // last frame: a still river means a still harbour, and costs nothing.
+        // The river runs whenever the Dock is in sight, quicker during a crossing, and
+        // stops the moment the app is out of sight. (1.2.0 let it settle still a few
+        // seconds after any news; on the phone that read as an animation that broke.)
         val lifecycle = LocalLifecycleOwner.current.lifecycle
         val seen by lifecycle.currentStateFlow.collectAsState()
         val visible = seen.isAtLeast(Lifecycle.State.STARTED)
         LaunchedEffect(connecting, holding, away, visible) {
             if (!visible) return@LaunchedEffect
             var last = -1L
-            var settleUntil = System.nanoTime() + SETTLE_NS
             while (isActive) {
-                if (connecting || boatX.isRunning) settleUntil = System.nanoTime() + SETTLE_NS
-                if (System.nanoTime() > settleUntil) break
-                // ~30 fps while anything moves, ~10 fps for settling water.
-                delay(if (connecting || boatX.isRunning) 33 else 100)
+                // ~30 fps: braille water steps in whole dots, so more buys nothing.
+                delay(33)
                 val now = System.nanoTime()
                 if (last > 0) {
                     val dt = ((now - last) / 1e9f).coerceAtMost(0.25f)
@@ -461,7 +462,7 @@ private val MIST_CHARS = charArrayOf('⠛', '⠿', '⠷', '⠧', '⠻', '⠟', '
 /** The scene's ink, pre-resolved to ARGB ints for the native canvas. Two skies:
  *  night keeps the colors the crossing was born with; daybreak re-inks the same
  *  drawing on paper — dark hull, deep water, gold gone from light to ink. */
-private class SceneInk(
+private data class SceneInk(
     val sea: Int,
     val gold: Int,
     val mist: Int,
@@ -515,4 +516,3 @@ private val DOT_BITS = arrayOf(
 )
 
 /** How long the river keeps moving after the last thing that moved it. */
-private const val SETTLE_NS = 5_000_000_000L

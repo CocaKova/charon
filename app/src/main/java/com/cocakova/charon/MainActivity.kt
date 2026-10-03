@@ -75,7 +75,13 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        Sky.load(getSharedPreferences("charon", MODE_PRIVATE))
+        getSharedPreferences("charon", MODE_PRIVATE).let { prefs ->
+            Sky.load(prefs)
+            // The livery's hue waters the whole river, not just the terminal (1.2.1).
+            val wanted = prefs.getString("scheme", null)
+            (com.cocakova.charon.theme.TerminalSchemes.all + com.cocakova.charon.premium.Obol.customLiveries(prefs))
+                .firstOrNull { it.name == wanted }?.let(com.cocakova.charon.theme.Tide::wear)
+        }
         val app = application as CharonApp
         if (BuildConfig.DEBUG) maybeDebugConnect(intent, app)
         // A recreated activity carries the same intent: only a fresh start reads it.

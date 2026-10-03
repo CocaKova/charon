@@ -93,6 +93,19 @@ object Sky {
     }
 }
 
+/**
+ * The livery's accent, worn by the whole river (1.2.1): set from the helm the moment a
+ * livery is picked, loaded at start. Null = Styx, the water Charon was born with.
+ */
+object Tide {
+    var accent by mutableStateOf<Color?>(null)
+        private set
+
+    fun wear(scheme: TerminalScheme) {
+        accent = if (scheme.name == TerminalSchemes.STYX.name) null else Color(0xFF000000.toInt() or scheme.cursor)
+    }
+}
+
 @Composable
 fun CharonTheme(
     content: @Composable () -> Unit,
@@ -102,11 +115,18 @@ fun CharonTheme(
         Sky.DAYBREAK -> false
         else -> isSystemInDarkTheme()
     }
+    val palette = (if (darkTheme) NightPalette else DaybreakPalette).wateredBy(Tide.accent)
+    val base = if (darkTheme) CharonDarkScheme else CharonLightScheme
+    val scheme = if (Tide.accent == null) base else base.copy(
+        primary = palette.water,
+        onPrimaryContainer = palette.water,
+        primaryContainer = androidx.compose.ui.graphics.lerp(palette.abyss, palette.water, 0.22f),
+    )
     CompositionLocalProvider(
-        LocalCharonPalette provides if (darkTheme) NightPalette else DaybreakPalette,
+        LocalCharonPalette provides palette,
     ) {
         MaterialTheme(
-            colorScheme = if (darkTheme) CharonDarkScheme else CharonLightScheme,
+            colorScheme = scheme,
             typography = CharonTypography,
             shapes = CharonShapes,
             content = content,

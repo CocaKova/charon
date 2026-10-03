@@ -6,6 +6,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableFloatStateOf
 import com.cocakova.charon.theme.NightPalette
 import com.cocakova.charon.theme.LocalCharonPalette
+import com.cocakova.charon.theme.isNight
 import com.cocakova.charon.theme.Hulls
 import android.text.format.DateUtils
 import androidx.compose.animation.core.LinearEasing
@@ -173,19 +174,13 @@ fun DockScreen(
     // One clock lights every lantern on the Dock: each card reads this inside its
     // draw phase (never in composition) at its own phase offset, so the whole fleet
     // flickers asynchronously off a single animation instead of one per card.
-    // The lanterns flicker for a while when there's news (the Dock comes into view,
-    // a sounding lands, a crossing starts) and then burn steady: a still Dock costs
-    // no frames.
+    // The lanterns burn the whole time the Dock is in sight (1.2.1; 1.2.0 let them go
+    // steady ten seconds after any news, which read as broken). Out of sight the
+    // frame clock stops, and they with it.
     val lanternClock = remember { mutableFloatStateOf(0f) }
-    var lanternsAwake by remember { mutableStateOf(true) }
-    LaunchedEffect(soundings, connecting) {
-        lanternsAwake = true
-        delay(LANTERN_AWAKE_MS)
-        lanternsAwake = false
-    }
-    LaunchedEffect(lanternsAwake) {
+    LaunchedEffect(Unit) {
         val start = withFrameNanos { it }
-        while (lanternsAwake) {
+        while (true) {
             withFrameNanos { t -> lanternClock.floatValue = ((t - start) / 1e9f * LANTERN_RATE) % (2 * Math.PI).toFloat() }
         }
     }
@@ -728,7 +723,7 @@ private fun MooringCard(
         val lantern = lanternColor(host.colorHex)
         // By night the core burns toward white; on Daybreak's paper a white core reads
         // as a hole, so it deepens toward ink instead.
-        val onPaper = LocalCharonPalette.current !== NightPalette
+        val onPaper = !LocalCharonPalette.current.isNight
         val flameCore = if (onPaper) lerp(lantern, Styx.bone, 0.40f) else lerp(lantern, Color.White, 0.45f)
         val reachable = sounding?.reach == Reach.REACHABLE
         val phase = remember(host.id) { (host.id.hashCode() and 0xFFFF) / 65535f * 6.2832f }
@@ -871,6 +866,4 @@ private fun ChartWatersCard(
     }
 }
 
-/** How long the lanterns flicker after news before they burn steady. */
-private const val LANTERN_AWAKE_MS = 10_000L
 private const val LANTERN_RATE = (2 * Math.PI / 2.8).toFloat()
